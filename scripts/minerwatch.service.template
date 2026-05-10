@@ -1,0 +1,35 @@
+# systemd user unit template for MinerWatch (Linux / Raspberry Pi).
+#
+# Placeholders (replaced by install-service.sh):
+#   @MINERWATCH_DIR@   absolute path to the MinerWatch checkout
+#
+# Installed at: ~/.config/systemd/user/minerwatch.service
+# Logs:         journalctl --user -u minerwatch -f
+#
+# Manage manually:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now minerwatch.service
+#   systemctl --user status minerwatch.service
+#   systemctl --user stop minerwatch.service
+#
+# To make it start at boot WITHOUT being logged in:
+#   sudo loginctl enable-linger $USER
+
+[Unit]
+Description=MinerWatch — local-first dashboard for home Bitcoin miners
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@MINERWATCH_DIR@
+ExecStart=@MINERWATCH_DIR@/start.sh
+Restart=on-failure
+RestartSec=10s
+
+# Logs go to journald by default; uncomment to also write to a file:
+# StandardOutput=append:@MINERWATCH_DIR@/data/logs/minerwatch.out.log
+# StandardError=append:@MINERWATCH_DIR@/data/logs/minerwatch.err.log
+
+[Install]
+WantedBy=default.target

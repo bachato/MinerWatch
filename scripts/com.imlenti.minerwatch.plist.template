@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    macOS LaunchAgent template for MinerWatch.
+
+    Placeholders (replaced by install-service.sh):
+        @MINERWATCH_DIR@   absolute path to the MinerWatch checkout
+        @LABEL@            launchd service label (default: com.imlenti.minerwatch)
+
+    Installed at: ~/Library/LaunchAgents/<label>.plist
+    Logs at:      <MINERWATCH_DIR>/data/logs/minerwatch.{out,err}.log
+
+    Manage manually:
+        launchctl load   ~/Library/LaunchAgents/com.imlenti.minerwatch.plist
+        launchctl unload ~/Library/LaunchAgents/com.imlenti.minerwatch.plist
+        launchctl list | grep minerwatch
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@LABEL@</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@MINERWATCH_DIR@/start.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@MINERWATCH_DIR@</string>
+
+    <!-- Run at login and keep alive on crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <!-- Throttle restarts: wait at least 10s between attempts -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Logs (rotation handled by macOS / external logrotate if desired) -->
+    <key>StandardOutPath</key>
+    <string>@MINERWATCH_DIR@/data/logs/minerwatch.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>@MINERWATCH_DIR@/data/logs/minerwatch.err.log</string>
+
+    <!-- Inherit a sane PATH (Homebrew on Apple Silicon and Intel) -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- Process type 'Background' tells macOS this is a long-running service -->
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MinerWatch · Login</title>
+<link rel="stylesheet" href="/static/app.css?v=2" />
+</head>
+<body style="display:flex;align-items:center;justify-content:center;min-height:100vh">
+    <div class="modal" style="position:relative">
+        <div class="brand" style="margin-bottom:18px">
+            <div class="brand-mark">MW</div> MinerWatch
+        </div>
+        <div class="field">
+            <label>Password</label>
+            <input id="pwd" type="password" autocomplete="current-password" autofocus />
+        </div>
+        <button class="primary" id="btn-login" style="width:100%">Sign in</button>
+        <div id="msg" class="subtitle" style="margin-top:10px;text-align:center"></div>
+    </div>
+    <script src="/static/app.js?v=2"></script>
+    <script>
+        document.getElementById('btn-login').addEventListener('click', login);
+        document.getElementById('pwd').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') login();
+        });
+        async function login() {
+            const password = document.getElementById('pwd').value;
+            try {
+                await api('/api/auth/login', { method: 'POST', body: { password } });
+                window.location.href = '/';
+            } catch (err) {
+                document.getElementById('msg').textContent = 'Incorrect password';
+            }
+        }
+    </script>
+</body>
+</html>

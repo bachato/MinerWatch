@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MinerWatch · Settings</title>
+<link rel="stylesheet" href="/static/app.css?v=2" />
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">MW</div> MinerWatch</div>
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link active" href="/settings">Settings</a>
+        <div class="sidebar-footer">v0.1 · local</div>
+    </aside>
+
+    <main class="main">
+        <div class="toolbar">
+            <h1>Settings</h1>
+            <div class="actions">
+                <button class="primary" id="btn-save">Save all</button>
+            </div>
+        </div>
+
+        <div class="panel">
+            <h2>Polling & storage</h2>
+            <div class="panel-row">
+                <div>
+                    <label>Polling interval (seconds)</label>
+                    <input type="number" id="polling.interval_seconds" min="2" max="300" />
+                </div>
+                <div>
+                    <label>Request timeout (seconds)</label>
+                    <input type="number" id="polling.request_timeout" min="1" max="30" />
+                </div>
+                <div>
+                    <label>Hashrate smoothing (seconds, 0 = off)</label>
+                    <input type="number" id="polling.hashrate_smoothing_seconds" min="0" max="600" />
+                </div>
+                <div>
+                    <label>History retention (days)</label>
+                    <input type="number" id="storage.retention_days" min="1" max="3650" />
+                </div>
+            </div>
+            <p class="subtitle" style="margin-top:8px;font-size:12px">
+                <strong>Hashrate smoothing</strong>: tau (time constant) of the EMA applied server-side.
+                60s is a good trade-off between responsiveness and stability. Set to 0 to see raw firmware values.
+            </p>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Alert thresholds</h2>
+            <div class="panel-row">
+                <div>
+                    <label>Max chip temp (°C)</label>
+                    <input type="number" id="alerts.temp_chip_threshold" min="40" max="120" step="0.5" />
+                </div>
+                <div>
+                    <label>Max VR temp (°C)</label>
+                    <input type="number" id="alerts.temp_vr_threshold" min="40" max="130" step="0.5" />
+                </div>
+                <div>
+                    <label>Offline threshold (seconds)</label>
+                    <input type="number" id="alerts.offline_threshold_seconds" min="10" max="3600" />
+                </div>
+                <div>
+                    <label>Repeat alert every (seconds)</label>
+                    <input type="number" id="alerts.repeat_seconds" min="60" max="86400" />
+                </div>
+            </div>
+            <div class="panel-row" style="margin-top:10px">
+                <div>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                        <input type="checkbox" id="alerts.notifications_enabled"/>
+                        <span><strong>Send push notifications</strong></span>
+                    </label>
+                    <p class="subtitle" style="margin-top:4px;font-size:12px">
+                        Global kill-switch. When disabled, MinerWatch continues recording alerts to the database
+                        but does not send push notifications to anyone. Browser subscriptions remain unchanged.
+                    </p>
+                </div>
+            </div>
+            <p class="subtitle" style="margin-top:8px;font-size:12px">
+                If the condition persists (temp still above threshold, miner still offline),
+                MinerWatch will re-emit the alert and push every "Repeat alert every" seconds (default 600 = 10 min).
+            </p>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Push notifications (browser)</h2>
+            <p class="subtitle">
+                When a threshold is exceeded or a miner goes offline, MinerWatch
+                sends a native notification to the operating system (even with the tab closed,
+                as long as the browser is open).
+            </p>
+            <div id="push-status-box" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:10px">
+                <strong>Status:</strong> <span id="push-state-detail">checking...</span>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="primary" id="btn-push-enable">Enable notifications</button>
+                <button id="btn-push-test">Send test notification</button>
+                <button id="btn-push-disable" class="danger">Disable (this browser)</button>
+                <button id="btn-push-purge" class="danger">Remove ALL subscriptions</button>
+            </div>
+            <p class="subtitle" style="margin-top:8px;font-size:12px">
+                "Disable (this browser)" stops receiving notifications only here. If you
+                have subscribed other devices/tabs in the past and notifications still arrive,
+                use "Remove ALL" to clean the subscriptions list on the server.
+            </p>
+            <p class="subtitle" style="margin-top:10px;font-size:12px">
+                Compatible with Chrome, Edge, Firefox, Safari 16+. On iOS requires
+                "Add to Home" as a PWA.
+            </p>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Network</h2>
+            <div class="panel-row">
+                <div>
+                    <label>Subnet scan (CIDR, "auto" to use the Mac's network)</label>
+                    <input type="text" id="network.scan_cidr" placeholder="192.168.1.0/24" />
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Password protection</h2>
+            <p class="subtitle">Disabled by default. When enabled, you must enter a password that will be required on each login.</p>
+            <div class="panel-row">
+                <div>
+                    <label><input type="checkbox" id="auth.enabled"/> Enable password</label>
+                </div>
+                <div>
+                    <label>Password</label>
+                    <input type="password" id="auth.password" placeholder="••••••••" />
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Alert history</h2>
+            <div id="alerts-list"></div>
+        </div>
+    </main>
+</div>
+
+<script src="/static/app.js?v=2"></script>
+<script src="/static/settings.js?v=2"></script>
+</body>
+</html>

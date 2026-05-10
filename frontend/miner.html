@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MinerWatch · Miner</title>
+<link rel="stylesheet" href="/static/app.css?v=3" />
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">MW</div> MinerWatch</div>
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link active" href="#">Miner</a>
+        <a class="nav-link" href="/settings">Settings</a>
+        <div class="sidebar-footer">v0.1 · local</div>
+    </aside>
+
+    <main class="main">
+        <div class="toolbar">
+            <div>
+                <h1 id="miner-title">…</h1>
+                <div class="subtitle" id="miner-subtitle"></div>
+            </div>
+            <div class="actions">
+                <a class="btn" href="/">← Dashboard</a>
+                <button id="btn-restart">Restart</button>
+                <button id="btn-delete" class="danger">Remove</button>
+            </div>
+        </div>
+
+        <div class="detail-layout">
+            <div id="best-shares-card" class="best-share-card hidden"></div>
+
+            <div class="panel">
+                <h2>Current status</h2>
+                <div id="live-stats" class="panel-row"></div>
+            </div>
+
+            <div class="panel">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                    <h2 style="margin:0">History</h2>
+                    <div class="range-buttons">
+                        <button data-range="3600">1h</button>
+                        <button data-range="21600">6h</button>
+                        <button data-range="86400" class="active">24h</button>
+                        <button data-range="604800">7d</button>
+                        <button data-range="2592000">30d</button>
+                    </div>
+                </div>
+                <div class="chart-container"><canvas id="chart-hashrate"></canvas></div>
+                <div class="chart-container" style="margin-top:14px"><canvas id="chart-temp"></canvas></div>
+            </div>
+
+            <div class="panel">
+                <h2>Controls</h2>
+                <div id="capabilities-note" class="subtitle" style="margin-bottom:10px"></div>
+                <div id="controls" class="controls-grid"></div>
+            </div>
+
+            <div class="panel">
+                <h2>Hardware info</h2>
+                <div id="hw-info"></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="/static/app.js?v=3"></script>
+<script src="/static/miner.js?v=3"></script>
+</body>
+</html>

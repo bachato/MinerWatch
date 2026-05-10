@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MinerWatch · Dashboard</title>
+<link rel="stylesheet" href="/static/app.css?v=3" />
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">MW</div> MinerWatch</div>
+        <a class="nav-link active" href="/">Dashboard</a>
+        <a class="nav-link" href="/settings">Settings</a>
+        <div class="sidebar-footer">
+            <div>v0.1 · local</div>
+            <div id="sw-status">Push: <span id="push-state">—</span></div>
+        </div>
+    </aside>
+
+    <main class="main">
+        <div class="toolbar">
+            <div>
+                <h1>Miner fleet</h1>
+                <div class="subtitle" id="subtitle">Polling every 5s · data straight from miners on the LAN</div>
+            </div>
+            <div class="actions">
+                <button id="btn-scan">Scan network</button>
+                <button id="btn-add-miner" class="primary">+ Add miner</button>
+            </div>
+        </div>
+
+        <div id="critical-bar" class="alerts-bar hidden"></div>
+        <div id="alerts-bar" class="alerts-bar hidden"></div>
+        <div id="fleet-summary" class="fleet-summary"></div>
+        <div id="best-shares-card" class="best-share-card hidden"></div>
+        <div id="fleet-hashrate-chart" class="hashrate-chart-card hidden">
+            <div class="hashrate-chart-header">
+                <div>
+                    <div class="hashrate-chart-title">Fleet total hashrate</div>
+                    <div class="hashrate-chart-subtitle">1-minute average · last hour</div>
+                </div>
+                <div class="hashrate-chart-current">
+                    <span id="hashrate-chart-value">—</span>
+                    <span class="hashrate-chart-unit">TH/s</span>
+                </div>
+            </div>
+            <div class="hashrate-chart-body">
+                <svg id="hashrate-chart-svg"></svg>
+                <div id="hashrate-chart-tooltip" class="hashrate-chart-tooltip"></div>
+            </div>
+        </div>
+        <div id="dashboard-root"></div>
+    </main>
+</div>
+
+<script src="/static/app.js?v=3"></script>
+<script src="/static/push.js?v=2"></script>
+</body>
+</html>

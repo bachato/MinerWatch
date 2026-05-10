@@ -1,0 +1,65 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime data — MAI committare (contiene VAPID keys, subscription endpoint, MAC dei miner reali)
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Configurazione locale (l'utente la crea, lo schema sta in config.example.yaml)
+config.yaml
+.env
+.env.local
+
+# macOS
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Documenti interni di lavoro / handoff (NON pubblici)
+HANDOFF.md
+NOTES.md
+TODO.md
+
+# Vecchio progetto separato (non parte di MinerWatch)
+canaan /
+canaan/
+
+# PDF reports rendered locally (may contain real metrics from the user's miners)
+reports/
+
+# Build output
+dist/
+build/
+*.tar.gz
+*.zip
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db
+desktop.ini

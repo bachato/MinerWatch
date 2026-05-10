@@ -1,0 +1,53 @@
+# Initial MinerWatch configuration.
+# Copy this file to config.yaml and tweak the values.
+# Everything is also editable from the Settings page in the UI.
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+network:
+  # Subnet to scan during auto-discovery (CIDR notation).
+  # Leave "auto" to use the host's current subnet.
+  scan_cidr: "auto"
+  # Timeout for each connection attempt (seconds).
+  scan_timeout: 0.4
+
+polling:
+  # Interval between polling cycles, in seconds.
+  interval_seconds: 5
+  # Timeout for an HTTP/TCP call to a single miner.
+  request_timeout: 4
+
+storage:
+  # Tiered retention. Each tier is a separate aggregation level kept
+  # for a different amount of time. The poller aggregates raw 5s
+  # samples into 1-minute and 1-hour rollup tables, then prunes each
+  # table according to its own retention.
+  #
+  #   metrics      → raw 5s samples (full fidelity)
+  #   metrics_1m   → 1-minute averages (great for 6h–24h charts)
+  #   metrics_1h   → 1-hour averages   (great for 7d–30d+ charts)
+  #
+  # Defaults give you ~50MB stable size for a 4-miner fleet and let
+  # you keep ~2 years of long-term history. Tune freely.
+  retention_raw_hours: 48
+  retention_1m_days: 30
+  retention_1h_days: 730
+  # Deprecated alias kept for older configs: if set, mirrors onto
+  # `retention_1m_days` so the old knob still does what it used to.
+  # retention_days: 30
+
+alerts:
+  # Chip temperature threshold in °C: above this value the alert fires.
+  temp_chip_threshold: 75
+  # VR temperature threshold (voltage regulator) in °C.
+  temp_vr_threshold: 90
+  # Seconds after which a miner is considered OFFLINE if it doesn't reply.
+  offline_threshold_seconds: 60
+
+auth:
+  # If true, the API and UI require the bearer token (settings.password).
+  enabled: false
+  # Token / password (if empty and enabled=true, it is generated on first startup).
+  password: ""
