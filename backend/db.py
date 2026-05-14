@@ -169,6 +169,35 @@ CREATE TABLE IF NOT EXISTS best_records (
 );
 
 CREATE INDEX IF NOT EXISTS idx_best_records_miner ON best_records(miner_id);
+
+-- Solo-mining block-found events. Each row is a share whose difficulty
+-- was greater than or equal to the Bitcoin network difficulty at the
+-- time the share was seen — i.e. the miner has effectively found a
+-- block. Statistically rare for home gear, very special for the owner.
+--
+-- We store both the share difficulty and the network difficulty at
+-- the moment of discovery so the home page can show how big the win
+-- actually was (e.g. "share 130 T vs network 125 T").
+-- block_height is optional and may be filled in later via a
+-- block-explorer lookup. It is nullable on insert, so we never block
+-- the alert pipeline on an external API call.
+-- NOTE for future edits of this schema: keep comments free of any
+-- semicolon character, even inside an SQL --line comment. The setup
+-- code splits SCHEMA_SQL statement-by-statement on the semicolon
+-- separator, and a stray one in a comment is interpreted as the end
+-- of a statement, leaving the rest as garbage SQL.
+CREATE TABLE IF NOT EXISTS block_finds (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    miner_id            INTEGER,
+    miner_name          TEXT NOT NULL,
+    ts                  INTEGER NOT NULL,
+    share_difficulty    REAL NOT NULL,
+    network_difficulty  REAL NOT NULL,
+    block_height        INTEGER,
+    FOREIGN KEY (miner_id) REFERENCES miners(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_block_finds_ts ON block_finds(ts);
 """
 
 
@@ -1195,3 +1224,73 @@ async def set_fan_config(
             ),
         )
         await conn.commit()
+
+
+# ---------- Block finds (solo-mining wins) ----------
+# Persisting these is the whole point of the feature: a home solo miner
+# wants to see "I once mined block N" on their dashboard for years.
+
+async def insert_block_find(
+    miner_id: int | None,
+    miner_name: str,
+    share_difficulty: float,
+    network_difficulty: float,
+    ts: int | None = None,
+    block_height: int | None = None,
+) -> int:
+    """Record a block-found event. Returns the new row id.
+
+    ``miner_id`` is nullable on the FK side so a miner deletion doesn't
+    erase the historical win — the ``miner_name`` snapshot keeps the
+    record human-readable forever.
+    """
+    when = ts if ts is not None else now_ts()
+    async with connect() as conn:
+        cur = await conn.execute(
+            """
+            INSERT INTO block_finds
+              (miner_id, miner_name, ts, share_difficulty,
+               network_difficulty, block_height)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (miner_id, miner_name, when, float(share_difficulty),
+             float(network_difficulty), block_height),
+        )
+        await conn.commit()
+        return cur.lastrowid or 0
+
+
+async def list_block_finds(limit: int = 50) -> list[dict[str, Any]]:
+    """Return the most recent block-found events, newest first."""
+    async with connect() as conn:
+        async with conn.execute(
+            """
+            SELECT id, miner_id, miner_name, ts, share_difficulty,
+                   network_difficulty, block_height
+            FROM block_finds
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def last_block_find_share_value(miner_id: int) -> float | None:
+    """Return the highest share difficulty already recorded as a block
+    find for this miner, or ``None`` if there is none.
+
+    The poller uses it as anti-duplication: if the current share is at or
+    below the previous block-find value, we don't fire again. A new
+    block-find must strictly exceed the last one to count.
+    """
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT MAX(share_difficulty) AS v FROM block_finds WHERE miner_id = ?",
+            (miner_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    if not row or row["v"] is None:
+        return None
+    return float(row["v"])

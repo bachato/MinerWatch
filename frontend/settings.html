@@ -88,12 +88,24 @@
         </div>
 
         <div class="panel" style="margin-top:14px">
-            <h2>Push notifications (browser)</h2>
+            <h2>Browser push notifications</h2>
             <p class="subtitle">
-                When a threshold is exceeded or a miner goes offline, MinerWatch
-                sends a native notification to the operating system (even with the tab closed,
-                as long as the browser is open).
+                Native OS notifications delivered by the browser. Work as long as the
+                browser is open, even with the tab closed.
             </p>
+            <div class="panel-row" style="margin-bottom:10px">
+                <div>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                        <input type="checkbox" id="alerts.push_enabled"/>
+                        <span><strong>Send browser push notifications</strong></span>
+                    </label>
+                    <p class="subtitle" style="margin-top:4px;font-size:12px">
+                        When off, MinerWatch stops sending browser pushes for new alerts.
+                        Existing browser subscriptions stay registered so re-enabling
+                        works instantly.
+                    </p>
+                </div>
+            </div>
             <div id="push-status-box" style="background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:10px">
                 <strong>Status:</strong> <span id="push-state-detail">checking...</span>
             </div>
@@ -109,9 +121,58 @@
                 use "Remove ALL" to clean the subscriptions list on the server.
             </p>
             <p class="subtitle" style="margin-top:10px;font-size:12px">
-                Compatible with Chrome, Edge, Firefox, Safari 16+. On iOS requires
-                "Add to Home" as a PWA.
+                <strong>Heads up:</strong> browsers expose the Web Push API only on
+                <code>https://</code> or <code>http://localhost</code>. If you open
+                MinerWatch via the Mac's LAN IP from an iPhone or another device, push
+                will appear as "not supported" — use the Telegram channel below instead.
             </p>
+        </div>
+
+        <div class="panel" style="margin-top:14px">
+            <h2>Telegram notifications</h2>
+            <p class="subtitle">
+                MinerWatch can send alerts to a Telegram chat or group. Works on any
+                device (iPhone, Android, desktop) without HTTPS, since it's the server
+                that calls Telegram's API — not your browser.
+            </p>
+            <div class="panel-row" style="margin-bottom:10px">
+                <div>
+                    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                        <input type="checkbox" id="alerts.telegram_enabled"/>
+                        <span><strong>Send Telegram notifications</strong></span>
+                    </label>
+                </div>
+            </div>
+            <div class="panel-row">
+                <div>
+                    <label>Bot token</label>
+                    <input type="password" id="alerts.telegram_bot_token" placeholder="••••••••••••••••" autocomplete="off"/>
+                    <p class="subtitle" id="telegram-token-status" style="margin-top:4px;font-size:12px">&nbsp;</p>
+                </div>
+                <div>
+                    <label>Chat ID</label>
+                    <input type="text" id="alerts.telegram_chat_id" placeholder="e.g. 123456789 or -1001234567890" autocomplete="off"/>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                <button class="primary" id="btn-telegram-test">Send test message</button>
+                <button id="btn-telegram-discover">Find my chat ID</button>
+            </div>
+            <div id="telegram-discover-result" class="hidden" style="margin-top:10px;background:var(--bg-input);border:1px solid var(--border);border-radius:6px;padding:10px"></div>
+            <details style="margin-top:12px">
+                <summary style="cursor:pointer;color:var(--text-dim);font-size:13px">How to set up — step by step</summary>
+                <ol style="margin-top:8px;font-size:13px;line-height:1.6;color:var(--text-dim)">
+                    <li>Open Telegram → search for <strong>@BotFather</strong> → send <code>/newbot</code> and follow the prompts.</li>
+                    <li>Copy the token BotFather gives you, paste it in <strong>Bot token</strong> above, then click <strong>Save all</strong>.</li>
+                    <li>Open your new bot in Telegram and send <code>/start</code> (or any message) — this lets the bot see your chat.</li>
+                    <li>Click <strong>Find my chat ID</strong> here. Pick your chat. The ID gets filled in automatically.</li>
+                    <li>Tick <strong>Send Telegram notifications</strong> and click <strong>Save all</strong> again.</li>
+                    <li>Click <strong>Send test message</strong> — you should see "MinerWatch · test" in Telegram within a second.</li>
+                </ol>
+                <p class="subtitle" style="margin-top:6px;font-size:12px">
+                    For a group: add the bot to the group, send any message, then use "Find my chat ID" — group IDs are negative numbers (e.g. <code>-1001234567890</code>).
+                </p>
+            </details>
         </div>
 
         <div class="panel" style="margin-top:14px">

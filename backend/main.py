@@ -312,6 +312,19 @@ async def api_fleet_hashrate_history(
     }
 
 
+@app.get("/api/fleet/block_finds")
+async def api_fleet_block_finds(limit: int = 50) -> dict:
+    """Return the list of block-found events for the whole fleet.
+
+    Used by the home page to render the celebratory "Blocks found"
+    card. Returns the most recent ``limit`` events newest-first; the
+    UI typically shows them all (they're so rare that the list is
+    short in any reasonable timeframe).
+    """
+    rows = await db.list_block_finds(limit=max(1, min(int(limit), 500)))
+    return {"block_finds": rows}
+
+
 @app.get("/api/fleet/best_difficulty")
 async def api_fleet_best_difficulty() -> dict:
     """Return the fleet's top best-share record per scope.
@@ -567,15 +580,29 @@ class SettingsPayload(BaseModel):
 @app.get("/api/settings")
 async def api_get_settings() -> dict:
     cfg = get_config()
+    # ``asdict(cfg.alerts)`` would echo back the Telegram bot token in
+    # plain text — same risk we already avoid for ``auth.password``.
+    # Replace it with a boolean flag so the UI can show "✓ configured"
+    # without ever revealing the secret.
+    alerts_view = asdict(cfg.alerts)
+    alerts_view["telegram_token_set"] = bool(alerts_view.pop("telegram_bot_token", "").strip())
+    # Sanitize the raw stored map too: anything sensitive (password,
+    # bot token) gets stripped here. Existing callers don't rely on
+    # these specific keys being present.
+    stored = {
+        k: v
+        for k, v in (await db.all_settings()).items()
+        if k not in {"auth.password", "alerts.telegram_bot_token"}
+    }
     return {
         "current": {
             "polling": asdict(cfg.polling),
-            "alerts": asdict(cfg.alerts),
+            "alerts": alerts_view,
             "storage": asdict(cfg.storage),
             "network": asdict(cfg.network),
             "auth_enabled": cfg.auth.enabled,
         },
-        "stored": await db.all_settings(),
+        "stored": stored,
     }
 
 
@@ -694,5 +721,93 @@ async def api_push_test() -> dict:
         }
     )
     return {"ok": True, "subscribers": len(subs)}
+
+
+# ---------- API: Telegram ----------
+
+@app.post("/api/telegram/test")
+async def api_telegram_test() -> dict:
+    """Send a test message to the configured Telegram chat.
+
+    Mirrors ``/api/push/test``: confirms end-to-end that bot token and
+    chat_id are valid without waiting for a real alert. Returns the
+    error description from Telegram (if any) so the UI can show it.
+    """
+    from . import alerts as _alerts
+
+    ok, detail = await _alerts.send_telegram(
+        {
+            "title": "MinerWatch · test",
+            "body": "Telegram notifications are working! 🎉",
+        }
+    )
+    if not ok:
+        # 400 keeps the same convention as /api/push/test for "you need
+        # to configure things first".
+        raise HTTPException(status_code=400, detail=detail)
+    return {"ok": True}
+
+
+@app.get("/api/telegram/discover_chat_id")
+async def api_telegram_discover_chat_id() -> dict:
+    """Help the user find the chat_id for the currently-configured bot.
+
+    Calls Telegram's ``getUpdates`` and extracts the distinct chats
+    seen recently. The user just sent ``/start`` to the bot from their
+    phone — the chat shows up here, they click it in the UI and the
+    chat_id field gets populated automatically.
+
+    Note: Telegram drops updates after ~24h, and ``getUpdates`` is
+    incompatible with webhooks. We never set a webhook so this is
+    safe to call repeatedly.
+    """
+    from . import alerts as _alerts
+
+    raw = await _alerts.telegram_get_updates()
+    if not raw.get("ok"):
+        # Surface both our own errors (missing token, network) and
+        # Telegram's (invalid token → "Unauthorized") to the UI.
+        error = raw.get("error") or raw.get("description") or "unknown error"
+        raise HTTPException(status_code=400, detail=error)
+
+    seen: dict[str, dict[str, Any]] = {}
+    for update in raw.get("result", []):
+        # Telegram messages can come as ``message``, ``edited_message``,
+        # ``channel_post``, etc. We unify all of them.
+        msg = (
+            update.get("message")
+            or update.get("edited_message")
+            or update.get("channel_post")
+            or update.get("my_chat_member")
+        )
+        if not isinstance(msg, dict):
+            continue
+        chat = msg.get("chat") or {}
+        cid = chat.get("id")
+        if cid is None:
+            continue
+        key = str(cid)
+        if key in seen:
+            continue
+        # Build a human-friendly label: prefer username, then first/last
+        # name, then chat title for groups. Fall back to the raw id.
+        username = chat.get("username")
+        first = chat.get("first_name")
+        last = chat.get("last_name")
+        title = chat.get("title")
+        ctype = chat.get("type") or "?"
+        if title:
+            label = f"{title} ({ctype})"
+        elif first or last:
+            full = " ".join(p for p in (first, last) if p)
+            label = f"{full}" + (f" @{username}" if username else "")
+        elif username:
+            label = f"@{username}"
+        else:
+            label = key
+        seen[key] = {"chat_id": key, "label": label, "type": ctype}
+
+    return {"ok": True, "chats": list(seen.values())}
+
 
 

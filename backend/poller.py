@@ -106,7 +106,7 @@ class Poller:
                     alltime_hint=sample.best_difficulty_alltime,
                 )
                 # Push only on a fresh all-time record. Anti-spam guards
-                # (first-ever seed, +10% growth, 60s cool-down) live in
+                # (first-ever seed, +0.1% growth, 60s cool-down) live in
                 # alerts.notify_new_alltime_best.
                 evt = rec.get("events", {}) if isinstance(rec, dict) else {}
                 if evt.get("new_alltime"):
@@ -119,6 +119,27 @@ class Poller:
                         new_value=new.get("value"),
                         ts=ts,
                     )
+
+                # =====================================================
+                # BLOCK-FOUND detection — see alerts.py for the opt-out.
+                # To disable entirely, flip alerts.BLOCK_FOUND_ENABLED
+                # to False; this branch will short-circuit immediately.
+                # =====================================================
+                if alerts.BLOCK_FOUND_ENABLED and sample.best_difficulty is not None:
+                    # Prefer the network difficulty the miner itself is
+                    # using (consistent with its share grading). Fall
+                    # back to the cached/external value otherwise.
+                    network_diff = await alerts.get_network_difficulty(
+                        miner_hint=sample.network_difficulty,
+                    )
+                    if network_diff and sample.best_difficulty >= network_diff:
+                        await alerts.notify_block_found(
+                            miner_id=miner_id,
+                            miner_name=names_by_id.get(miner_id, sample.host),
+                            share_difficulty=float(sample.best_difficulty),
+                            network_difficulty=float(network_diff),
+                            ts=ts,
+                        )
 
         # Evaluate alerts after we've saved everything
         await alerts.evaluate(out)

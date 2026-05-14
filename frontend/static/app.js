@@ -144,10 +144,66 @@ async function renderDashboard() {
             renderAlerts(),
             updateHashrateChart(miners),
             renderBestShares(miners),
+            renderBlockFinds(),
         ]);
     } catch (err) {
         toast(`Error loading: ${err.message}`, 'error');
     }
+}
+
+// Block-finds trophy card. Pulls every persisted block-found event
+// from the backend and renders a celebratory card at the top of the
+// dashboard. The card hides itself when the list is empty — most home
+// solo miners will go years without seeing one, so the default state
+// is "invisible".
+async function renderBlockFinds() {
+    const card = document.getElementById('block-finds-card');
+    if (!card) return;
+    let data;
+    try {
+        data = await api('/api/fleet/block_finds');
+    } catch {
+        card.classList.add('hidden');
+        return;
+    }
+    const finds = data.block_finds || [];
+    if (!finds.length) {
+        card.classList.add('hidden');
+        return;
+    }
+    const entries = finds.map((f) => {
+        const date = new Date((f.ts || 0) * 1000);
+        const dateStr = date.toLocaleString();
+        const share = fmtDifficulty(f.share_difficulty);
+        const network = fmtDifficulty(f.network_difficulty);
+        const heightHtml = f.block_height
+            ? ` · block <strong>#${f.block_height}</strong>`
+            : '';
+        return `
+            <div class="block-find-entry">
+                <div class="block-find-trophy">🏆</div>
+                <div class="block-find-body">
+                    <div class="block-find-title">
+                        <strong>${escapeHtml(f.miner_name)}</strong> found a block
+                    </div>
+                    <div class="block-find-meta">
+                        share <strong>${share}</strong> ≥ network <strong>${network}</strong>
+                        · ${escapeHtml(dateStr)}${heightHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    card.classList.remove('hidden');
+    card.innerHTML = `
+        <div class="block-finds-header">
+            <div class="block-finds-title">🎉 Blocks found</div>
+            <div class="block-finds-subtitle">
+                ${finds.length === 1 ? '1 block' : `${finds.length} blocks`} mined by this fleet — kept forever
+            </div>
+        </div>
+        <div class="block-finds-list">${entries}</div>
+    `;
 }
 
 // Best-share card: fleet session/all-time values fetched from the

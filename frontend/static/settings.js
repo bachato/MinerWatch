@@ -10,6 +10,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btn-push-test').addEventListener('click', sendTestPush);
     document.getElementById('btn-push-disable').addEventListener('click', disablePushFlow);
     document.getElementById('btn-push-purge').addEventListener('click', purgeAllPushSubs);
+    document.getElementById('btn-telegram-test').addEventListener('click', sendTelegramTest);
+    document.getElementById('btn-telegram-discover').addEventListener('click', discoverTelegramChatId);
 });
 
 async function loadSettings() {
@@ -33,6 +35,21 @@ async function loadSettings() {
         // Default: active (backward compatibility with pre-feature DB)
         document.getElementById('alerts.notifications_enabled').checked = true;
     }
+    // New per-channel toggles. push_enabled defaults to ``true`` on old
+    // DBs that never set it, telegram_enabled defaults to ``false``.
+    document.getElementById('alerts.push_enabled').checked =
+        cur.alerts.push_enabled !== undefined ? !!cur.alerts.push_enabled : true;
+    document.getElementById('alerts.telegram_enabled').checked = !!cur.alerts.telegram_enabled;
+    document.getElementById('alerts.telegram_chat_id').value = cur.alerts.telegram_chat_id || '';
+    // Bot token: the backend never echoes it back. We show a status
+    // hint instead so the user knows whether it's already set.
+    const tokenStatus = document.getElementById('telegram-token-status');
+    if (cur.alerts.telegram_token_set) {
+        tokenStatus.innerHTML = '✓ token configured — leave empty to keep, fill in to replace';
+    } else {
+        tokenStatus.innerHTML = '⚠ no token set — paste the one BotFather gave you';
+    }
+
     document.getElementById('network.scan_cidr').value = cur.network.scan_cidr;
     document.getElementById('auth.enabled').checked = cur.auth_enabled;
     // password is never returned; field stays empty and user resets only if they want to change it
@@ -49,14 +66,27 @@ async function saveSettings() {
         'alerts.offline_threshold_seconds': document.getElementById('alerts.offline_threshold_seconds').value,
         'alerts.repeat_seconds': document.getElementById('alerts.repeat_seconds').value,
         'alerts.notifications_enabled': document.getElementById('alerts.notifications_enabled').checked,
+        'alerts.push_enabled': document.getElementById('alerts.push_enabled').checked,
+        'alerts.telegram_enabled': document.getElementById('alerts.telegram_enabled').checked,
+        'alerts.telegram_chat_id': document.getElementById('alerts.telegram_chat_id').value.trim(),
         'network.scan_cidr': document.getElementById('network.scan_cidr').value,
         'auth.enabled': document.getElementById('auth.enabled').checked,
     };
     const pwd = document.getElementById('auth.password').value;
     if (pwd) overrides['auth.password'] = pwd;
+    // Bot token: same write-only pattern as the auth password. Only
+    // include it if the user typed something, so leaving the field
+    // empty preserves the existing token.
+    const botToken = document.getElementById('alerts.telegram_bot_token').value;
+    if (botToken) overrides['alerts.telegram_bot_token'] = botToken;
     try {
         await api('/api/settings', { method: 'POST', body: { overrides } });
         toast('Settings saved', 'success');
+        // Clear the secret inputs so they don't linger in the DOM, and
+        // refresh the token status hint.
+        document.getElementById('alerts.telegram_bot_token').value = '';
+        document.getElementById('auth.password').value = '';
+        await loadSettings();
     } catch (err) {
         toast(`Error: ${err.message}`, 'error');
     }
@@ -213,6 +243,67 @@ async function purgeAllPushSubs() {
     } catch (err) {
         toast(`Error: ${err.message}`, 'error');
     }
+}
+
+// ---------- Telegram ----------
+
+async function sendTelegramTest() {
+    try {
+        await api('/api/telegram/test', { method: 'POST' });
+        toast('Test sent — check your Telegram app', 'success', 5000);
+    } catch (err) {
+        // Backend returns the Telegram description on failure (e.g.
+        // "Unauthorized" → wrong token, "chat not found" → wrong chat_id).
+        toast(`Telegram test failed: ${err.message}`, 'error', 7000);
+    }
+}
+
+async function discoverTelegramChatId() {
+    const resultBox = document.getElementById('telegram-discover-result');
+    resultBox.classList.remove('hidden');
+    resultBox.innerHTML = '<div class="subtitle">Asking Telegram for recent chats…</div>';
+    let data;
+    try {
+        data = await api('/api/telegram/discover_chat_id');
+    } catch (err) {
+        resultBox.innerHTML = `
+            <div class="subtitle" style="color:var(--danger)">
+                ❌ ${escapeHtml(err.message)}
+            </div>
+            <div class="subtitle" style="margin-top:6px;font-size:12px">
+                Make sure the bot token is saved (click "Save all" first), and that
+                you've sent at least one message to the bot from your Telegram app.
+            </div>
+        `;
+        return;
+    }
+    if (!data.chats.length) {
+        resultBox.innerHTML = `
+            <div class="subtitle">
+                No chats yet. Open Telegram, find your bot, send <code>/start</code>
+                (or any message), then click "Find my chat ID" again.
+            </div>
+        `;
+        return;
+    }
+    const rows = data.chats.map((c) => `
+        <button type="button" class="telegram-chat-pick"
+                data-chat-id="${escapeHtml(c.chat_id)}"
+                style="display:block;width:100%;text-align:left;margin-bottom:6px">
+            <strong>${escapeHtml(c.label)}</strong>
+            <span class="subtitle" style="font-size:12px"> · id ${escapeHtml(c.chat_id)} · ${escapeHtml(c.type)}</span>
+        </button>
+    `).join('');
+    resultBox.innerHTML = `
+        <div class="subtitle" style="margin-bottom:6px">Click a chat to fill the Chat ID field:</div>
+        ${rows}
+    `;
+    resultBox.querySelectorAll('.telegram-chat-pick').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            document.getElementById('alerts.telegram_chat_id').value = btn.dataset.chatId;
+            toast(`Chat ID set to ${btn.dataset.chatId} — click "Save all" to keep it`, 'info', 4000);
+        });
+    });
 }
 
 // helpers (duplicated from push.js for settings page independence)

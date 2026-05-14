@@ -67,10 +67,22 @@ class AlertsCfg:
     # If a threshold is still exceeded N seconds after the first alert,
     # we emit another one (and another push). Default: 10 min.
     repeat_seconds: int = 600
-    # Global kill-switch for push notifications. When False, send_push()
-    # returns immediately without sending anything, regardless of the
-    # registered subscriptions. It's a clean "do not disturb": subs aren't touched.
+    # Global kill-switch for ALL notifications (every channel). When False,
+    # the notification dispatcher returns immediately. Subscriptions and
+    # tokens are kept untouched, so re-enabling restores delivery without
+    # any further action from the user. It's a clean "do not disturb".
     notifications_enabled: bool = True
+    # Per-channel toggles. Browser push works only in secure contexts
+    # (https or localhost) — useless on a LAN IP from an iPhone. The
+    # Telegram channel covers exactly that gap: it's an outbound HTTP
+    # POST from the server, so it works regardless of how the user
+    # reaches the dashboard.
+    push_enabled: bool = True
+    telegram_enabled: bool = False
+    telegram_bot_token: str = ""
+    # String (not int) so it transparently supports group chats whose
+    # IDs are negative numbers like "-1001234567890".
+    telegram_chat_id: str = ""
 
 
 @dataclass

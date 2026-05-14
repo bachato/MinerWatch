@@ -62,6 +62,12 @@ class MinerSample:
     # persistent storage (cgminer/BOSminer/Avalon `Best Share`) leave
     # this None — MinerWatch then derives all-time from its own DB.
     best_difficulty_alltime: float | None = None
+    # Current Bitcoin network difficulty as seen by the miner via
+    # stratum. AxeOS exposes this in ``networkDifficulty``. When a share
+    # difficulty meets or exceeds this value, the miner has effectively
+    # found a block. Drivers that don't surface it leave None; MinerWatch
+    # falls back to a periodic fetch from a public block-explorer API.
+    network_difficulty: float | None = None
     pool_url: str | None = None
     worker: str | None = None
 

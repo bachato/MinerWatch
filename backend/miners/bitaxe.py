@@ -100,6 +100,14 @@ class BitaxeDriver(MinerDriver):
         # without waiting for a brand-new high share to materialise.
         best_diff_alltime = _parse_si_difficulty(_bd)
 
+        # AxeOS reports the current Bitcoin network difficulty as seen
+        # via stratum. Most modern firmwares expose ``networkDifficulty``
+        # as a numeric value already in "raw" form (no SI suffix). If
+        # for some reason it comes back as an SI string ("125.5T"), the
+        # SI parser handles both. Used by MinerWatch to detect a "block
+        # found" event (share difficulty >= network difficulty).
+        network_diff = _parse_si_difficulty(data.get("networkDifficulty"))
+
         pool_url = data.get("stratumURL") or data.get("stratumUrl")
         if pool_url and data.get("stratumPort"):
             pool_url = f"{pool_url}:{data['stratumPort']}"
@@ -128,6 +136,7 @@ class BitaxeDriver(MinerDriver):
             rejected=rejected,
             best_difficulty=best_diff_session,
             best_difficulty_alltime=best_diff_alltime,
+            network_difficulty=network_diff,
             pool_url=pool_url,
             worker=worker,
             raw=data,

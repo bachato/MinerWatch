@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>MinerWatch · Dashboard</title>
-<link rel="stylesheet" href="/static/app.css?v=3" />
+<link rel="stylesheet" href="/static/app.css?v=4" />
 </head>
 <body>
 <div class="app">
@@ -33,6 +33,13 @@
         <div id="critical-bar" class="alerts-bar hidden"></div>
         <div id="alerts-bar" class="alerts-bar hidden"></div>
         <div id="fleet-summary" class="fleet-summary"></div>
+        <!--
+          Block-found trophy card: shown only when at least one block
+          has been recorded in the DB. For a home solo miner finding
+          a block is a once-in-a-lifetime event — the card is meant
+          to stay on the dashboard forever as a badge of honor.
+        -->
+        <div id="block-finds-card" class="block-finds-card hidden"></div>
         <div id="best-shares-card" class="best-share-card hidden"></div>
         <div id="fleet-hashrate-chart" class="hashrate-chart-card hidden">
             <div class="hashrate-chart-header">
@@ -54,7 +61,7 @@
     </main>
 </div>
 
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 <script src="/static/push.js?v=2"></script>
 </body>
 </html>
