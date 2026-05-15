@@ -151,7 +151,7 @@ function renderLiveStats({ miner, last_metric, live_sample }) {
         cells.push(['Air inlet temp', `${fmtNum(tempIn, 1)} <span style="font-size:11px;color:var(--text-dim)">°C</span>`]);
     }
     cells.push(
-        ['Fan', `${v('fan_rpm') || '—'} rpm${v('fan_pct') ? ' · ' + v('fan_pct') + '%' : ''}`],
+        ['Fan', `${escapeHtml(v('fan_rpm') || '—')} rpm${v('fan_pct') ? ' · ' + escapeHtml(v('fan_pct')) + '%' : ''}`],
         ['Frequency', v('frequency_mhz') ? `${v('frequency_mhz')} MHz` : '—'],
         ['Voltage', v('voltage_mv') ? `${v('voltage_mv')} mV` : '—'],
         ['ASIC count', ls.asic_count || '—'],

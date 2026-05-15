@@ -86,6 +86,19 @@ async def on_startup() -> None:
         )
 
     ensure_vapid_keys()
+
+    # Fail-closed sanity check: if auth.enabled is True but the password
+    # is empty, every protected request will 401. We don't crash the
+    # process (that would create a boot loop and lock the user out
+    # without a fix path), but we surface a loud warning in the log so
+    # the misconfiguration isn't silent.
+    if cfg.auth.enabled and not (cfg.auth.password or "").strip():
+        log.warning(
+            "auth.enabled=True but auth.password is empty — all protected "
+            "requests will be rejected with 401. Either set a password in "
+            "/settings, or disable auth in config.yaml / via the DB."
+        )
+
     log.info("Starting MinerWatch — port %s", cfg.server.port)
     await poller.start()
     await auto_fan.start()

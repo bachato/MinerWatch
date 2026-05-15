@@ -12,7 +12,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('btn-push-purge').addEventListener('click', purgeAllPushSubs);
     document.getElementById('btn-telegram-test').addEventListener('click', sendTelegramTest);
     document.getElementById('btn-telegram-discover').addEventListener('click', discoverTelegramChatId);
+
+    const btnLogout = document.getElementById('btn-logout');
+    if (btnLogout) btnLogout.addEventListener('click', logout);
 });
+
+// Clears the mw_token cookie server-side, then bounces the browser to
+// /login. If auth is disabled the endpoint is a no-op and we still
+// redirect — keeps the button predictable regardless of config state.
+async function logout() {
+    if (!confirm('Log out from this browser?')) return;
+    try {
+        await api('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+        // Even if the endpoint failed, the safest UX is to send the
+        // user to /login so they can't keep operating under a stale
+        // (possibly already-invalidated) session.
+        toast(`Logout error: ${err.message}`, 'error');
+    }
+    window.location.href = '/login';
+}
 
 async function loadSettings() {
     const data = await api('/api/settings');
@@ -102,8 +121,8 @@ async function loadAlerts() {
             ${alerts.map((a) => `
                 <tr>
                     <td>${new Date(a.ts * 1000).toLocaleString()}</td>
-                    <td><span class="status-dot ${a.severity === 'critical' ? 'offline' : a.severity === 'warning' ? 'warning' : 'online'}"></span>${a.severity}</td>
-                    <td>${a.code}</td>
+                    <td><span class="status-dot ${a.severity === 'critical' ? 'offline' : a.severity === 'warning' ? 'warning' : 'online'}"></span>${escapeHtml(a.severity)}</td>
+                    <td>${escapeHtml(a.code)}</td>
                     <td>${escapeHtml(a.message)}</td>
                     <td>${a.acknowledged ? '✓' : `<button onclick="ackAlert(${a.id})">Ack</button>`}</td>
                 </tr>

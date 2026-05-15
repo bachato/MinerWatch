@@ -23,9 +23,22 @@ def require_auth(request: Request) -> None:
     cfg = get_config()
     if not cfg.auth.enabled:
         return
-    expected = cfg.auth.password or ""
+    expected = (cfg.auth.password or "").strip()
     if not expected:
-        return
+        # Fail-closed: auth.enabled=True but no password configured.
+        # Returning 200 here (the previous behaviour) silently bypassed
+        # authentication, which is the opposite of what the operator
+        # asked for. We now refuse every protected request.
+        #
+        # Recovery if you locked yourself out:
+        #   1) edit config.yaml and set `auth.enabled: false`, OR
+        #   2) `sqlite3 data/minerwatch.db
+        #       "UPDATE settings SET value='false' WHERE key='auth.enabled';"`
+        # then restart the app.
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication is enabled but no password is configured",
+        )
     provided = get_token(request) or ""
     if provided != expected:
         raise HTTPException(status_code=401, detail="Unauthorized")

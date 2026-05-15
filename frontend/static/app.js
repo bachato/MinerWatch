@@ -405,7 +405,7 @@ function renderMinerCard(m) {
                 </div>
             </div>
             <div class="miner-card-footer">
-                <span>${m.model || ''}</span>
+                <span>${escapeHtml(m.model || '')}</span>
                 <span>${fmtRelative(m.last_seen_ts)}</span>
             </div>
         </div>

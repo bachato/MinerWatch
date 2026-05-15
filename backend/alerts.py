@@ -477,7 +477,15 @@ async def evaluate(samples: dict[int, MinerSample]) -> None:
 
         if sample.online:
             new_state["last_online_ts"] = now
-            if not was_online:
+            # Symmetric with the offline branch below: we only announce a
+            # "back online" if we had previously announced an "offline".
+            # Without this gate, a single failed poll (e.g. AxeOS' tiny
+            # web server stalling past `request_timeout`) flips the
+            # in-memory state to offline, and the very next successful
+            # poll fires a spurious "recovered" — even though the offline
+            # window never crossed `offline_threshold_seconds` and the
+            # user was never told the miner went down in the first place.
+            if not was_online and prev.get("offline_alerted"):
                 msg = f"{miner_name} is back online"
                 await db.insert_alert(miner_id, "info", "recovered", msg)
                 await send_notification({"title": "Miner online", "body": msg, "miner_id": miner_id})
