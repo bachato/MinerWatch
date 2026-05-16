@@ -252,6 +252,68 @@ app.mount(
 )
 
 
+# ---------- React frontend (work-in-progress) ----------
+#
+# The new TypeScript/React UI lives in `frontend-react/` and gets
+# compiled to `frontend-react/dist/`. We serve it under /v2/* while the
+# migration is in progress; the legacy vanilla UI stays the canonical
+# entry point at /. SPA routing means any sub-path under /v2/ that
+# doesn't map to a static asset should fall back to /v2/index.html so
+# React Router can handle it client-side.
+
+REACT_DIST = FRONTEND_DIR.parent / "frontend-react" / "dist"
+
+
+@app.get("/v2", include_in_schema=False)
+@app.get("/v2/", include_in_schema=False)
+async def react_index() -> Response:
+    index = REACT_DIST / "index.html"
+    if not index.exists():
+        return JSONResponse(
+            {
+                "detail": (
+                    "frontend-react not built yet. Run `cd frontend-react && "
+                    "npm install && npm run build`."
+                )
+            },
+            status_code=503,
+        )
+    return FileResponse(index, media_type="text/html")
+
+
+if REACT_DIST.exists():
+    # Static assets emitted by Vite (hashed JS/CSS chunks, plus anything
+    # else under dist/). The base path is /v2/ so vite.config.ts's
+    # `base: '/v2/'` lines up with what the browser asks for.
+    app.mount(
+        "/v2/assets",
+        _NoCacheStaticFiles(directory=str(REACT_DIST / "assets")),
+        name="v2-assets",
+    )
+
+
+@app.get("/v2/{path:path}", include_in_schema=False)
+async def react_catchall(path: str) -> Response:
+    """SPA fallback for client-side routes (/v2/analytics, /v2/miner/3 …).
+
+    React Router owns the routes; the server only needs to return the
+    same index.html for any unknown path so the JS bundle can take
+    over. Real files (like dist/manifest.json, were we to add one)
+    are still served by the StaticFiles mount above — this handler is
+    only reached when the path doesn't match a built asset.
+    """
+    candidate = REACT_DIST / path
+    if candidate.is_file():
+        return FileResponse(candidate)
+    index = REACT_DIST / "index.html"
+    if not index.exists():
+        return JSONResponse(
+            {"detail": "frontend-react not built yet"},
+            status_code=503,
+        )
+    return FileResponse(index, media_type="text/html")
+
+
 # ---------- API: miners ----------
 
 class MinerCreate(BaseModel):

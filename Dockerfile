@@ -2,6 +2,10 @@
 #
 # Multi-stage Dockerfile for MinerWatch.
 #
+# Stage 0 (frontend-builder): runs `npm install && npm run build` for
+# the React/TypeScript app in frontend-react/. Output: dist/ with the
+# bundled JS/CSS + index.html the FastAPI app serves under /v2/.
+#
 # Stage 1 (builder): grabs the system build deps that *might* be
 # needed for native wheels of `cryptography` / `pywebpush` on less
 # common architectures (Pi 32-bit, musl, …). On amd64 / arm64 the
@@ -9,12 +13,31 @@
 # isn't even invoked — but having it available means the image
 # still builds cleanly on every reasonable host.
 #
-# Stage 2 (runtime): copies only the resolved virtualenv plus the
-# application code into a fresh slim image. No compiler, no apt
-# state, no build artefacts left behind.
+# Stage 2 (runtime): copies only the resolved virtualenv, the
+# application code and the React build into a fresh slim image. No
+# compiler, no Node, no apt state, no build artefacts left behind.
 
 ###############################################################################
-# Stage 1 — builder
+# Stage 0 — frontend-builder (React/Vite via Node 20)
+###############################################################################
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /build
+
+# Install JS deps first so this layer is cached as long as the
+# package manifests don't change. `npm install` rather than `npm ci`
+# because we don't ship the lockfile in git yet — once we do, swap
+# this for `npm ci` for fully reproducible builds.
+COPY frontend-react/package.json frontend-react/package-lock.json* ./
+RUN npm install --no-audit --no-fund
+
+# Now bring in the sources and produce dist/.
+COPY frontend-react/ ./
+RUN npm run build
+
+
+###############################################################################
+# Stage 1 — builder (Python virtualenv)
 ###############################################################################
 FROM python:3.11-slim AS builder
 
@@ -74,6 +97,11 @@ WORKDIR /app
 COPY --chown=minerwatch:minerwatch backend            ./backend
 COPY --chown=minerwatch:minerwatch frontend           ./frontend
 COPY --chown=minerwatch:minerwatch config.example.yaml ./config.example.yaml
+
+# React build output from stage 0. The path inside the image
+# (./frontend-react/dist) is what backend/main.py computes for
+# REACT_DIST, so /v2/* "just works" out of the box.
+COPY --chown=minerwatch:minerwatch --from=frontend-builder /build/dist ./frontend-react/dist
 
 # Persistent runtime data: SQLite DB, VAPID keys, push subscriptions
 # and logs. Declaring the VOLUME means containers started without an
