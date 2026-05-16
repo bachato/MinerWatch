@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MinerWatch · System</title>
+<link rel="stylesheet" href="/static/app.css?v=5" />
+</head>
+<body>
+<div class="app">
+    <aside class="sidebar">
+        <div class="brand"><div class="brand-mark">MW</div> MinerWatch</div>
+        <a class="nav-link" href="/">Dashboard</a>
+        <a class="nav-link" href="/settings">Settings</a>
+        <a class="nav-link active nav-link-system hidden" href="/system">System</a>
+        <div class="sidebar-footer">v0.1 · local</div>
+    </aside>
+
+    <main class="main">
+        <div class="toolbar">
+            <div>
+                <h1>System</h1>
+                <div class="subtitle" id="system-subtitle">Host metrics · live</div>
+            </div>
+            <div class="actions">
+                <span id="system-status-badge" class="sys-badge sys-badge-muted">checking…</span>
+            </div>
+        </div>
+
+        <!-- Shown when the host is not a Raspberry Pi. We still serve the
+             URL so dev/testing on macOS doesn't 404; we just explain why
+             the rest of the page is empty. -->
+        <div id="system-not-raspberry" class="panel hidden" style="margin-bottom:14px">
+            <h2>Only available on Raspberry Pi</h2>
+            <p class="subtitle">
+                MinerWatch is currently running on a host that doesn't look
+                like a Raspberry Pi. Host metrics (temperature, throttling,
+                fan control) are Pi-specific and the corresponding sidebar
+                entry stays hidden in normal use.
+            </p>
+        </div>
+
+        <div id="system-root" class="hidden">
+            <!-- Header strip: model + uptime + RAM total + DB size -->
+            <div class="sys-header-strip">
+                <div class="sys-header-cell">
+                    <div class="sys-header-label">Model</div>
+                    <div class="sys-header-value" id="sys-model">—</div>
+                </div>
+                <div class="sys-header-cell">
+                    <div class="sys-header-label">Kernel</div>
+                    <div class="sys-header-value" id="sys-kernel">—</div>
+                </div>
+                <div class="sys-header-cell">
+                    <div class="sys-header-label">Uptime</div>
+                    <div class="sys-header-value" id="sys-uptime">—</div>
+                </div>
+                <div class="sys-header-cell">
+                    <div class="sys-header-label">Load avg (1·5·15)</div>
+                    <div class="sys-header-value" id="sys-load">—</div>
+                </div>
+            </div>
+
+            <!-- Throttling badge row: the most actionable Pi metric -->
+            <div class="panel" style="margin-top:14px">
+                <h2 style="display:flex;align-items:center;gap:10px">
+                    Power & throttling
+                    <span id="sys-throttle-now" class="sys-badge sys-badge-muted">—</span>
+                </h2>
+                <p class="subtitle">
+                    "Now" reflects the current state. "Since boot" stays
+                    sticky if any of these events ever happened — useful to
+                    catch problems that came and went.
+                </p>
+                <div class="sys-throttle-grid">
+                    <div class="sys-throttle-cell">
+                        <div class="sys-throttle-label">Under-voltage (now)</div>
+                        <div class="sys-throttle-state" id="sys-uv-now">—</div>
+                    </div>
+                    <div class="sys-throttle-cell">
+                        <div class="sys-throttle-label">Throttled (now)</div>
+                        <div class="sys-throttle-state" id="sys-th-now">—</div>
+                    </div>
+                    <div class="sys-throttle-cell">
+                        <div class="sys-throttle-label">Freq capped (now)</div>
+                        <div class="sys-throttle-state" id="sys-fc-now">—</div>
+                    </div>
+                    <div class="sys-throttle-cell">
+                        <div class="sys-throttle-label">Soft temp limit (now)</div>
+                        <div class="sys-throttle-state" id="sys-st-now">—</div>
+                    </div>
+                    <div class="sys-throttle-cell sys-throttle-ever">
+                        <div class="sys-throttle-label">Under-voltage (since boot)</div>
+                        <div class="sys-throttle-state" id="sys-uv-ever">—</div>
+                    </div>
+                    <div class="sys-throttle-cell sys-throttle-ever">
+                        <div class="sys-throttle-label">Throttled (since boot)</div>
+                        <div class="sys-throttle-state" id="sys-th-ever">—</div>
+                    </div>
+                    <div class="sys-throttle-cell sys-throttle-ever">
+                        <div class="sys-throttle-label">Freq capped (since boot)</div>
+                        <div class="sys-throttle-state" id="sys-fc-ever">—</div>
+                    </div>
+                    <div class="sys-throttle-cell sys-throttle-ever">
+                        <div class="sys-throttle-label">Soft temp limit (since boot)</div>
+                        <div class="sys-throttle-state" id="sys-st-ever">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Big gauges: CPU / RAM / Disk / Temperature -->
+            <div class="sys-gauge-grid">
+                <div class="sys-gauge">
+                    <div class="sys-gauge-label">CPU</div>
+                    <div class="sys-gauge-value"><span id="sys-cpu-val">—</span><span class="unit">%</span></div>
+                    <div class="sys-gauge-bar"><div class="sys-gauge-fill" id="sys-cpu-fill"></div></div>
+                    <div class="sys-gauge-sub" id="sys-cpu-sub">—</div>
+                </div>
+                <div class="sys-gauge">
+                    <div class="sys-gauge-label">RAM</div>
+                    <div class="sys-gauge-value"><span id="sys-mem-val">—</span><span class="unit">%</span></div>
+                    <div class="sys-gauge-bar"><div class="sys-gauge-fill" id="sys-mem-fill"></div></div>
+                    <div class="sys-gauge-sub" id="sys-mem-sub">—</div>
+                </div>
+                <div class="sys-gauge">
+                    <div class="sys-gauge-label">Disk (root)</div>
+                    <div class="sys-gauge-value"><span id="sys-disk-val">—</span><span class="unit">%</span></div>
+                    <div class="sys-gauge-bar"><div class="sys-gauge-fill" id="sys-disk-fill"></div></div>
+                    <div class="sys-gauge-sub" id="sys-disk-sub">—</div>
+                </div>
+                <div class="sys-gauge">
+                    <div class="sys-gauge-label">CPU temp</div>
+                    <div class="sys-gauge-value"><span id="sys-temp-val">—</span><span class="unit">°C</span></div>
+                    <div class="sys-gauge-bar"><div class="sys-gauge-fill sys-gauge-fill-temp" id="sys-temp-fill"></div></div>
+                    <div class="sys-gauge-sub" id="sys-temp-sub">target: 60 °C · throttle: 80 °C</div>
+                </div>
+            </div>
+
+            <!-- Fan card. Shown when fan info is exposed; the slider is
+                 only visible when the host has a controllable fan. -->
+            <div class="panel sys-fan-panel hidden" id="sys-fan-panel" style="margin-top:14px">
+                <h2>Fan</h2>
+                <div class="sys-fan-row">
+                    <div class="sys-fan-readouts">
+                        <div class="sys-readout">
+                            <div class="sys-readout-label">RPM</div>
+                            <div class="sys-readout-value" id="sys-fan-rpm">—</div>
+                        </div>
+                        <div class="sys-readout">
+                            <div class="sys-readout-label">Duty</div>
+                            <div class="sys-readout-value"><span id="sys-fan-percent">—</span><span class="unit">%</span></div>
+                        </div>
+                    </div>
+                    <div class="sys-fan-slider-wrap hidden" id="sys-fan-slider-wrap">
+                        <label for="sys-fan-slider">Set fan speed</label>
+                        <input type="range" id="sys-fan-slider" min="0" max="100" step="5" value="50" />
+                        <div class="sys-fan-slider-row">
+                            <span id="sys-fan-slider-readout">50%</span>
+                            <button class="primary" id="sys-fan-apply">Apply</button>
+                        </div>
+                        <p class="subtitle" style="margin:6px 0 0;font-size:12px" id="sys-fan-note"></p>
+                    </div>
+                    <div class="sys-fan-no-control hidden" id="sys-fan-no-control">
+                        <p class="subtitle" style="margin:0;font-size:12px">
+                            No controllable fan detected. To enable the
+                            slider, add the kernel overlay to your Pi's
+                            <code>/boot/firmware/config.txt</code>
+                            (Bookworm) or <code>/boot/config.txt</code>
+                            (older releases) and reboot:
+                        </p>
+                        <pre class="sys-code-block">dtoverlay=gpio-fan,gpiopin=14,temp=55000</pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Frequency + voltage compact card -->
+            <div class="panel" style="margin-top:14px">
+                <h2>CPU clock & voltage</h2>
+                <div class="sys-kv-grid">
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Current frequency</div>
+                        <div class="sys-kv-value" id="sys-freq">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Max nominal</div>
+                        <div class="sys-kv-value" id="sys-freq-max">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Core voltage</div>
+                        <div class="sys-kv-value" id="sys-volts">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">CPU cores</div>
+                        <div class="sys-kv-value" id="sys-cores">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Network LAN throughput + disk I/O -->
+            <div class="panel" style="margin-top:14px">
+                <h2>I/O activity</h2>
+                <p class="subtitle">Rolling average since last snapshot (~5 s).</p>
+                <div class="sys-kv-grid">
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Network ↓ (RX)</div>
+                        <div class="sys-kv-value" id="sys-net-rx">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Network ↑ (TX)</div>
+                        <div class="sys-kv-value" id="sys-net-tx">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Disk read</div>
+                        <div class="sys-kv-value" id="sys-disk-read">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Disk write</div>
+                        <div class="sys-kv-value" id="sys-disk-write">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Storage detail: free / total + DB + swap -->
+            <div class="panel" style="margin-top:14px">
+                <h2>Storage & memory detail</h2>
+                <div class="sys-kv-grid">
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Disk free</div>
+                        <div class="sys-kv-value" id="sys-disk-free">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Disk total</div>
+                        <div class="sys-kv-value" id="sys-disk-total">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">MinerWatch DB</div>
+                        <div class="sys-kv-value" id="sys-db-size">—</div>
+                    </div>
+                    <div class="sys-kv">
+                        <div class="sys-kv-label">Swap used</div>
+                        <div class="sys-kv-value" id="sys-swap">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Temperature mini-chart: rolling buffer of last ~5 min -->
+            <div class="panel" style="margin-top:14px">
+                <h2>Temperature trend</h2>
+                <p class="subtitle">Live, last ~5 minutes (60 samples · 5 s each).</p>
+                <div class="sys-trend-wrap">
+                    <svg id="sys-temp-chart" class="sys-trend-svg" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="sys-trend-legend">
+                    <span class="sys-trend-dot" style="background:var(--primary)"></span>
+                    <span id="sys-trend-current">—</span>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="/static/app.js?v=5"></script>
+<script src="/static/system.js?v=1"></script>
+</body>
+</html>

@@ -45,6 +45,38 @@ function toast(message, kind = 'info', timeout = 3500) {
 window.toast = toast;
 window.api = api;
 
+// ---------- Sidebar: reveal the "System" link only on Raspberry Pi ----------
+//
+// Every page that has a sidebar ships a hidden ".nav-link-system" entry
+// that we unhide here when /api/system/info reports is_raspberry=true.
+// The check is cached for the rest of the browser session via
+// sessionStorage so we don't hit the API on every nav.
+//
+// Failures are deliberately swallowed: on a non-Pi host the link stays
+// hidden and no error is surfaced — that's the intended outcome, not a
+// bug to report.
+
+(async function revealSystemLinkIfPi() {
+    if (!document.querySelector('.nav-link-system')) return;  // no sidebar on this page
+    const cached = sessionStorage.getItem('mw_is_raspberry');
+    if (cached === '1') {
+        document.querySelectorAll('.nav-link-system').forEach(el => el.classList.remove('hidden'));
+        return;
+    }
+    if (cached === '0') return;  // negative cache lasts for the session
+    try {
+        const info = await fetch('/api/system/info', { credentials: 'same-origin' });
+        if (!info.ok) return;
+        const data = await info.json();
+        if (data && data.is_raspberry) {
+            sessionStorage.setItem('mw_is_raspberry', '1');
+            document.querySelectorAll('.nav-link-system').forEach(el => el.classList.remove('hidden'));
+        } else {
+            sessionStorage.setItem('mw_is_raspberry', '0');
+        }
+    } catch (_) { /* offline / 401 → leave hidden */ }
+})();
+
 // ---------- Formatters ----------
 
 function fmtNum(value, decimals = 2, unit = '') {
@@ -137,6 +169,11 @@ async function renderDashboard() {
             api('/api/miners'),
             api('/api/settings'),
         ]);
+        // Reflect the *current* polling interval (read from the same
+        // settings the backend poller actually uses) in the toolbar
+        // subtitle, so changing it on /settings is visible on the home
+        // page the next time renderDashboard ticks (≤ POLL_MS).
+        updateSubtitleInterval(cfg);
         renderFleetSummary(miners);
         renderMiners(miners);
         renderCriticalBanner(miners, cfg);
@@ -149,6 +186,18 @@ async function renderDashboard() {
     } catch (err) {
         toast(`Error loading: ${err.message}`, 'error');
     }
+}
+
+// Update the dashboard toolbar subtitle to reflect the live polling
+// interval. The interval lives in cfg.polling.interval_seconds — same
+// value the backend poller uses — so when the user changes it on the
+// /settings page, the home page subtitle catches up on the next tick.
+function updateSubtitleInterval(cfg) {
+    const el = document.getElementById('subtitle');
+    if (!el) return;
+    const seconds = cfg && cfg.polling && Number(cfg.polling.interval_seconds);
+    const label = Number.isFinite(seconds) && seconds > 0 ? `${seconds}s` : '—s';
+    el.textContent = `Polling every ${label} · data straight from miners on the LAN`;
 }
 
 // Block-finds trophy card. Pulls every persisted block-found event

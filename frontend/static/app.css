@@ -881,3 +881,343 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
     font-size: 12px;
     color: var(--text-dim);
 }
+
+/* ---------- System page (Raspberry Pi host metrics) ---------- */
+
+/* Generic .hidden utility. Several System-page elements toggle their
+   visibility through JS; older components in this stylesheet each
+   declared a `<thing>.hidden` rule of their own, which still works
+   alongside this catch-all. */
+.hidden {
+    display: none !important;
+}
+
+/* Status badge — used in the toolbar + inside the throttling panel.
+   Mirrors the pill style from the alerts bar so the visual vocabulary
+   stays consistent across pages. */
+.sys-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.4;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-card);
+    color: var(--text-dim);
+}
+.sys-badge-ok {
+    background: rgba(74, 222, 128, 0.10);
+    border-color: rgba(74, 222, 128, 0.40);
+    color: var(--green);
+}
+.sys-badge-warn {
+    background: rgba(250, 204, 21, 0.10);
+    border-color: rgba(250, 204, 21, 0.45);
+    color: var(--yellow);
+}
+.sys-badge-bad {
+    background: rgba(248, 113, 113, 0.10);
+    border-color: rgba(248, 113, 113, 0.45);
+    color: var(--red);
+}
+.sys-badge-muted {
+    color: var(--text-muted);
+}
+
+/* Top "strip" with model/kernel/uptime/load — compact summary that
+   sits above the larger panels. */
+.sys-header-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+}
+.sys-header-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.sys-header-label {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.sys-header-value {
+    font-size: 14px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Throttling sub-grid. Eight cells (4 "now" + 4 "since boot"). On
+   narrow screens the grid wraps naturally because of auto-fit. */
+.sys-throttle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px;
+}
+.sys-throttle-cell {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.sys-throttle-cell.sys-throttle-ever {
+    opacity: 0.85;
+}
+.sys-throttle-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.sys-throttle-state {
+    font-size: 14px;
+    font-weight: 600;
+}
+.sys-throttle-state.sys-badge {
+    align-self: flex-start;
+}
+
+/* Four big "gauge" cards: CPU / RAM / Disk / Temperature. */
+.sys-gauge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+}
+.sys-gauge {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 122px;
+}
+.sys-gauge-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.sys-gauge-value {
+    font-size: 28px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    line-height: 1.1;
+}
+.sys-gauge-value .unit {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-weight: 400;
+    margin-left: 4px;
+}
+.sys-gauge-bar {
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.sys-gauge-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--primary);
+    border-radius: 3px;
+    transition: width .25s, background .25s;
+}
+.sys-gauge-fill-temp {
+    /* The temp bar already gets its colour set inline by JS via the
+       tempColor() helper. The selector exists so we can later tweak
+       only the temp gauge without bleeding into CPU/RAM. */
+}
+.sys-gauge-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-top: auto;
+}
+
+/* Fan card. The slider is a regular <input type="range"> styled to
+   blend with the rest of the app. */
+.sys-fan-panel.hidden { display: none; }
+.sys-fan-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+    gap: 20px;
+    align-items: start;
+}
+@media (max-width: 720px) {
+    .sys-fan-row { grid-template-columns: 1fr; }
+}
+.sys-fan-readouts {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.sys-readout {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+}
+.sys-readout-label {
+    font-size: 10.5px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+}
+.sys-readout-value {
+    font-size: 20px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+.sys-readout-value .unit {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-left: 3px;
+}
+.sys-fan-slider-wrap label {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+.sys-fan-slider-wrap input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    background: var(--bg-input);
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    padding: 0;
+    margin: 6px 0 8px;
+}
+.sys-fan-slider-wrap input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+.sys-fan-slider-wrap input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+    cursor: pointer;
+}
+.sys-fan-slider-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.sys-fan-slider-row span {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    font-weight: 600;
+}
+.sys-fan-no-control {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.sys-code-block {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    color: var(--text);
+    margin: 0;
+    overflow-x: auto;
+}
+
+/* Generic key-value grid (used for clock/voltage, I/O, storage detail). */
+.sys-kv-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+}
+.sys-kv {
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+}
+.sys-kv-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+}
+.sys-kv-value {
+    font-size: 15px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Temperature trend chart. Tiny SVG, sized to fit a single row of
+   panels — see the hashrate chart on the dashboard for the same
+   visual language. */
+.sys-trend-wrap {
+    position: relative;
+    height: 140px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px;
+}
+.sys-trend-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    overflow: visible;
+}
+.sys-trend-empty {
+    fill: var(--text-muted);
+    font-size: 12px;
+    font-family: inherit;
+}
+.sys-trend-legend {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.sys-trend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}

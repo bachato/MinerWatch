@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import db
+from . import system_info
 from .alerts import ensure_vapid_keys, public_key_b64
 from .auth import (
     clear_login_failures,
@@ -33,7 +34,7 @@ from .auth import (
     require_auth,
 )
 from .auto_control import auto_fan
-from .config import FRONTEND_DIR, get_config, reload_config
+from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
@@ -154,7 +155,7 @@ async def auth_middleware(request: Request, call_next):
     # cache is aggressive enough to serve stale content even after the
     # cookie has been set. Static assets keep their own cache policy.
     is_html_page = (
-        path in {"/", "/settings", "/login"} or path.startswith("/miner/")
+        path in {"/", "/settings", "/system", "/login"} or path.startswith("/miner/")
     )
     if cfg.auth.enabled and is_html_page:
         response.headers.setdefault("Cache-Control", "no-store")
@@ -176,6 +177,17 @@ async def miner_page(miner_id: int) -> Response:  # noqa: ARG001
 @app.get("/settings", include_in_schema=False)
 async def settings_page() -> Response:
     return FileResponse(FRONTEND_DIR / "settings.html")
+
+
+@app.get("/system", include_in_schema=False)
+async def system_page() -> Response:
+    """Host-system stats page (Raspberry Pi-focused).
+
+    Served on every host; the page itself bails out and shows an
+    "only available on Raspberry Pi" message if /api/system/info reports
+    is_raspberry=False — keeps the URL stable for dev/testing on macOS.
+    """
+    return FileResponse(FRONTEND_DIR / "system.html")
 
 
 @app.get("/login", include_in_schema=False)
@@ -573,6 +585,48 @@ async def api_scan(payload: Optional[DiscoveryPayload] = None) -> dict:
 async def api_discovery_auto() -> dict:
     found = await discover_and_register()
     return {"registered": len(found), "miners": found}
+
+
+# ---------- API: system (host metrics, Raspberry Pi focus) ----------
+
+class SystemFanPayload(BaseModel):
+    """Target PWM duty for the host fan (0..100 %)."""
+    percent: int = Field(..., ge=0, le=100)
+
+
+@app.get("/api/system/info")
+async def api_system_info() -> dict:
+    """Static host info — model, kernel, capabilities.
+
+    Frontend uses ``is_raspberry`` to decide whether to show the
+    "System" entry in the sidebar at all. Cheap call (everything is
+    precomputed at import time), so the home page can call it once on
+    load without measurable latency.
+    """
+    return system_info.host_info()
+
+
+@app.get("/api/system/snapshot")
+async def api_system_snapshot() -> dict:
+    """All dynamic host stats in a single payload. Polled ~every 5 s."""
+    return await system_info.snapshot_async(db_path=db_path())
+
+
+@app.post("/api/system/fan")
+async def api_system_set_fan(payload: SystemFanPayload) -> dict:
+    """Drive the host fan to the given percent (0..100).
+
+    Returns 400 if no controllable fan is present on this host (e.g.
+    running on macOS, or on a Pi without the gpio-fan / pwm-fan kernel
+    overlay configured). The UI hides the slider in that case, so this
+    is mostly belt-and-braces for direct API users.
+    """
+    try:
+        return await system_info.set_fan_percent_async(payload.percent)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # ---------- API: alerts ----------
