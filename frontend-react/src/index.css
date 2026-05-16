@@ -1,0 +1,86 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Theme tokens. The HSL tuples mirror the vanilla palette in
+   frontend/static/app.css so both frontends look like the same product
+   while the migration is in progress. Shadcn components read the
+   semantic tokens below, never the raw colours directly. */
+
+@layer base {
+  :root {
+    /* Dark theme — converted from the existing palette
+         --bg            #0f1115 → 220 18% 7%
+         --bg-card       #161a22 → 220 17% 11%
+         --border        #232938 → 224 22% 18%
+         --text          #e6e8ef → 226 22% 92%
+         --text-dim      #8b93a7 → 224 13% 60%
+         --primary       #5db0ff → 210 100% 68%
+       so dropping a vanilla page next to a React page during the
+       migration doesn't look like two different apps. */
+    --background: 220 18% 7%;
+    --foreground: 226 22% 92%;
+
+    --card: 220 17% 11%;
+    --card-foreground: 226 22% 92%;
+
+    --popover: 220 17% 11%;
+    --popover-foreground: 226 22% 92%;
+
+    --primary: 210 100% 68%;
+    --primary-foreground: 220 18% 7%;
+
+    --secondary: 224 22% 18%;
+    --secondary-foreground: 226 22% 92%;
+
+    --muted: 220 17% 14%;
+    --muted-foreground: 224 13% 60%;
+
+    --accent: 224 22% 18%;
+    --accent-foreground: 226 22% 92%;
+
+    --destructive: 0 84% 70%;
+    --destructive-foreground: 220 18% 7%;
+
+    --border: 224 22% 18%;
+    --input: 220 17% 8%;
+    --ring: 210 100% 68%;
+
+    /* Card-icon accents. Used by the KPI cards on the Dashboard and
+       the hardware view on the miner page. Kept distinct from the
+       primary blue so the eye can scan a page at a glance:
+         performance  emerald — hashrate, throughput, uptime
+         hardware     violet  — ASIC config, firmware
+         thermal      amber   — temperature, fans
+         power        green   — watts, efficiency
+         mining       sky     — shares, pool, network */
+    --chart-performance: 142 71% 55%;
+    --chart-hardware: 263 70% 65%;
+    --chart-thermal: 32 95% 60%;
+    --chart-power: 152 65% 55%;
+    --chart-mining: 199 89% 65%;
+
+    --radius: 0.625rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variant-numeric: tabular-nums;
+  }
+  /* Numbers in metric values should stay monospaced-ish so they don't
+     jiggle on every refresh — Inter's tabular-nums handles it. */
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}

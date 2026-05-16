@@ -64,6 +64,14 @@ build
 *.tar.gz
 *.zip
 
+# Frontend (React) — node_modules and any pre-built dist on the host
+# are excluded from the build context: stage 0 of the Dockerfile
+# (`frontend-builder`) installs and builds them from package.json
+# inside the image, so we get a reproducible build regardless of
+# what's lying around on the developer's machine.
+frontend-react/node_modules
+frontend-react/dist
+
 # Logs.
 *.log
 logs

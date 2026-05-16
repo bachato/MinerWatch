@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.DS_Store
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Local env overrides — none expected today, but reserved for the day
+# we add a VITE_ env to point the dev server at a non-default backend.
+.env
+.env.local
+.env.*.local
