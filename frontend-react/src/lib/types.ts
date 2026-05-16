@@ -184,10 +184,88 @@ export interface MetricsRangeResponse {
 
 export interface AuthStatus {
   enabled: boolean;
-  authenticated: boolean;
+  authenticated?: boolean;
 }
 
 export interface HealthResponse {
   status: 'ok';
   version: string;
+}
+
+// Subset of /api/settings we actually read from the frontend. The
+// endpoint returns more fields (auth subset, telegram_token_set, …)
+// but the dashboard only needs polling cadence + temperature limits
+// to render the toolbar subtitle and the critical-temperature banner.
+export interface SettingsCurrent {
+  polling: {
+    interval_seconds: number;
+    request_timeout: number;
+    hashrate_smoothing_seconds: number;
+  };
+  alerts: {
+    temp_chip_threshold: number;
+    temp_vr_threshold: number;
+    offline_threshold_seconds: number;
+    repeat_seconds: number;
+    notifications_enabled: boolean;
+    push_enabled: boolean;
+    telegram_enabled: boolean;
+    telegram_chat_id?: string | null;
+    telegram_token_set?: boolean;
+  };
+  storage: {
+    retention_raw_hours: number;
+    retention_1m_days: number;
+    retention_1h_days: number;
+  };
+  network: {
+    scan_cidr: string;
+    scan_timeout: number;
+  };
+  auth_enabled: boolean;
+}
+
+export interface SettingsResponse {
+  current: SettingsCurrent;
+  stored: Record<string, string>;
+}
+
+export type AlertSeverity = 'info' | 'warning' | 'critical';
+export type AlertCode = 'temp_chip' | 'temp_vr' | 'offline' | 'recovered' | string;
+
+export interface AlertEntry {
+  id: number;
+  miner_id: number | null;
+  ts: number;
+  severity: AlertSeverity;
+  code: AlertCode;
+  message: string;
+  acknowledged: number; // 0 | 1 (SQLite int)
+}
+
+export interface AlertsResponse {
+  alerts: AlertEntry[];
+}
+
+export interface MinerCreatePayload {
+  family: MinerFamily;
+  host: string;
+  port?: number | null;
+  name?: string | null;
+  notes?: string | null;
+}
+
+export interface DiscoveryFound {
+  family: MinerFamily;
+  host: string;
+  port: number;
+  mac: string | null;
+  name: string;
+  added: boolean;
+  reason?: string;
+}
+
+export interface DiscoveryResponse {
+  registered: number;
+  miners: DiscoveryFound[];
 }

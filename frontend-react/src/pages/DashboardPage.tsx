@@ -1,50 +1,72 @@
-import { Activity } from 'lucide-react';
+import { useState } from 'react';
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Toolbar } from '@/components/dashboard/Toolbar';
+import { CriticalBanner } from '@/components/dashboard/CriticalBanner';
+import { AlertsBanner } from '@/components/dashboard/AlertsBanner';
+import { FleetSummary } from '@/components/dashboard/FleetSummary';
+import { BlockFindsCard } from '@/components/dashboard/BlockFindsCard';
+import { BestSharesCard } from '@/components/dashboard/BestSharesCard';
+import { FleetHashrateChart } from '@/components/dashboard/FleetHashrateChart';
+import { MinerGrid } from '@/components/dashboard/MinerGrid';
+import { AddMinerDialog } from '@/components/dashboard/AddMinerDialog';
+import { useMiners, useScanNetwork, useSettings } from '@/api/hooks';
 
-// Placeholder for the migrated dashboard. The real content (fleet
-// summary, miner cards, hashrate chart, alerts, best-share card,
-// block-finds trophy) will land here in the next session.
-//
-// While this page is empty, the vanilla dashboard at /  remains the
-// canonical view. As soon as feature parity is reached we redirect the
-// vanilla route to /v2/.
-
+/**
+ * Migrated dashboard.
+ *
+ * Layout (top to bottom):
+ *   - Toolbar  · titles + Scan / Add miner buttons
+ *   - Critical bar  · only when at least one temp is over threshold
+ *   - Unread alerts bar  · only when there are unack alerts
+ *   - Fleet KPIs (5 cards)  · online · hashrate · power · efficiency · max temp
+ *   - Block-finds trophy  · only after a solo block has been mined
+ *   - Best-share fleet card  · session + all-time
+ *   - Fleet hashrate chart  · last hour, 1-min buckets
+ *   - Miner grid  · cards linking to /miner/:id (or empty-state CTA)
+ *   - Add miner dialog (modal)
+ *
+ * The legacy /api/* polling cadence (5 s) is preserved automatically by
+ * the TanStack Query hooks — every component reading the same query
+ * shares the same network call.
+ */
 export function DashboardPage() {
-  return (
-    <div className="space-y-6">
-      <header className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-          <p className="text-sm text-muted-foreground">Miner fleet · live LAN data</p>
-        </div>
-      </header>
+  const [addOpen, setAddOpen] = useState(false);
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary/15 text-primary">
-              <Activity className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle>Dashboard migration in progress</CardTitle>
-              <CardDescription>
-                Phase 1 (theme + shell) is live. Phase 2 will port the fleet view here.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            The classic dashboard is still available at{' '}
-            <a className="text-primary hover:underline" href="/">
-              the original /
-            </a>{' '}
-            while this React version is being built. Both share the same backend, so a miner you
-            add in one shows up in the other.
-          </p>
-        </CardContent>
-      </Card>
+  const { data: minersData, isLoading: minersLoading } = useMiners();
+  const { data: settingsData } = useSettings();
+  const scanMutation = useScanNetwork();
+
+  const miners = minersData?.miners ?? [];
+  const settings = settingsData?.current ?? null;
+  const pollingSeconds = settings?.polling?.interval_seconds ?? null;
+
+  return (
+    <div className="space-y-5">
+      <Toolbar
+        pollingSeconds={pollingSeconds}
+        onAdd={() => setAddOpen(true)}
+        onScan={() => scanMutation.mutate()}
+        scanning={scanMutation.isPending}
+      />
+
+      <CriticalBanner miners={miners} settings={settings} />
+      <AlertsBanner />
+
+      <FleetSummary miners={miners} />
+
+      <BlockFindsCard />
+      <BestSharesCard />
+      <FleetHashrateChart />
+
+      <MinerGrid
+        miners={miners}
+        loading={minersLoading}
+        onAdd={() => setAddOpen(true)}
+        onScan={() => scanMutation.mutate()}
+        scanning={scanMutation.isPending}
+      />
+
+      <AddMinerDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
 }
