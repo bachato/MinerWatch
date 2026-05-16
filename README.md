@@ -89,7 +89,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.
 ### macOS / Linux (one-line)
 
 ```bash
-git clone https://github.com/<your-username>/MinerWatch.git
+git clone https://github.com/imlenti/MinerWatch.git
 cd MinerWatch
 chmod +x start.sh
 ./start.sh
