@@ -2,6 +2,12 @@ node_modules/
 dist/
 .DS_Store
 
+# Vite occasionally writes a transient TS-config bundle alongside the
+# source one (vite.config.ts.timestamp-*.mjs) when reloading the config.
+# It's a temporary artefact, never commit it.
+vite.config.ts.timestamp-*.mjs
+vite.config.js.timestamp-*.mjs
+
 # Editor / OS
 .vscode/
 .idea/
