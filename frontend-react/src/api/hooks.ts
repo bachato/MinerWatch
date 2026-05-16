@@ -177,6 +177,51 @@ export function useScanNetwork() {
   });
 }
 
+export function useRestartMiner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) =>
+      api(`/api/miners/${id}/control/restart`, { method: 'POST' }),
+    onSuccess: (_data, id) => {
+      qc.invalidateQueries({ queryKey: ['miner', id] });
+    },
+  });
+}
+
+interface FanPayload {
+  percent: number;
+}
+
+export function useSetFan(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: FanPayload) =>
+      api(`/api/miners/${minerId}/control/fan`, { method: 'POST', body: payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['miner', minerId] });
+    },
+  });
+}
+
+interface FanConfigPayload {
+  fan_mode?: 'manual' | 'firmware' | 'minerwatch';
+  auto_target_c?: number;
+  fan_min_override?: number;
+  fan_max_override?: number;
+  fan_threshold_c?: number;
+}
+
+export function useSetFanConfig(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: FanConfigPayload) =>
+      api(`/api/miners/${minerId}/control/fan_config`, { method: 'POST', body: payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['miner', minerId] });
+    },
+  });
+}
+
 export function useAckAllAlerts() {
   const qc = useQueryClient();
   return useMutation({
