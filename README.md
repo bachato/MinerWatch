@@ -523,7 +523,7 @@ network you control, and verify the alert thresholds against your hardware
 spec sheet.
 
 This project is not affiliated with Bitaxe, NerdQAxe, Canaan, Braiins,
-HashWatcher, or Engineered Essentials Ventures.
+or other brands.
 
 ## Acknowledgements
 
