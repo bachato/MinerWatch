@@ -4,15 +4,15 @@ import path from 'node:path';
 
 // MinerWatch frontend — Vite config.
 //
-// The build is served by FastAPI under /v2/ (see backend/main.py). When
-// you change this base, the static asset hrefs change with it; the dev
-// server is unaffected because it serves from /.
+// Served by FastAPI under / (the React app is now the canonical UI,
+// the legacy vanilla frontend was retired in P1 session 5). Static
+// asset hrefs come out absolute under /assets/<hash>.
 //
 // In dev mode (`npm run dev`), Vite runs on :5173 and proxies /api/*
 // and /sw.js to the FastAPI backend on :8000 so you can call the real
 // API and exercise push notifications without CORS gymnastics.
 export default defineConfig({
-  base: '/v2/',
+  base: '/',
   plugins: [react()],
   resolve: {
     alias: {

@@ -47,7 +47,7 @@ export function AnalyticsPage() {
             <p className="text-sm text-muted-foreground">
               As soon as a miner accepts its first share, Predictions and the Top best shares
               leaderboard populate automatically. Head over to{' '}
-              <a className="text-primary hover:underline" href="/v2/">
+              <a className="text-primary hover:underline" href="/">
                 the Dashboard
               </a>{' '}
               to add one if you haven't already.

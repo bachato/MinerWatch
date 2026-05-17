@@ -21,6 +21,41 @@ miners on your home network — all from your browser, no cloud, no telemetry.
 
 </div>
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center">
+      <strong>Dashboard</strong><br/>
+      <sub>Fleet overview · live miner cards · hashrate chart</sub><br/>
+      <!-- Replace docs/screenshots/dashboard.png with a fresh 1280×800 capture of / -->
+      <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="100%"/>
+    </td>
+    <td align="center">
+      <strong>Miner controls</strong><br/>
+      <sub>Per-device Controls tab · fan slider · AUTO PID</sub><br/>
+      <!-- Capture /miner/&lt;id&gt; with the Controls tab open and save as docs/screenshots/miner-controls.png -->
+      <img src="docs/screenshots/miner-controls.png" alt="Miner controls" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>Analytics</strong><br/>
+      <sub>Beat-best & find-block predictions · top best shares</sub><br/>
+      <!-- Capture /analytics and save as docs/screenshots/analytics.png -->
+      <img src="docs/screenshots/analytics.png" alt="Analytics" width="100%"/>
+    </td>
+    <td align="center">
+      <strong>System</strong><br/>
+      <sub>Raspberry Pi host metrics · throttling · CPU temp</sub><br/>
+      <!-- Capture /system on the Pi and save as docs/screenshots/system.png -->
+      <img src="docs/screenshots/system.png" alt="System" width="100%"/>
+    </td>
+  </tr>
+</table>
+
+
+
 ---
 
 ## What it is
@@ -68,6 +103,9 @@ comfortable opening a terminal but not necessarily developers.
   IP changes don't break tracking
 - **Optional password protection** (bearer-token + cookie) for setups where
   the LAN isn't fully trusted
+- **Modern dark UI** — React 18 + TypeScript + Tailwind CSS + Shadcn primitives
+  + Recharts, served as a single-page app. Sidebar nav, tabbed device detail,
+  responsive down to phone-size viewports
 - **One-click macOS launcher**, Docker setup for Linux / Raspberry Pi, and
   an Umbrel App Store package (`umbrel/`) for one-click install on umbrelOS
 - **No cloud, no account, no analytics** — all data stays on your box
@@ -91,13 +129,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.
 ```bash
 git clone https://github.com/imlenti/MinerWatch.git
 cd MinerWatch
+
+# Build the React frontend once. Requires Node ≥ 18.
+# macOS:    brew install node
+# Raspbian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - \
+#           && sudo apt-get install -y nodejs
+cd frontend-react && npm install && npm run build && cd ..
+
 chmod +x start.sh
 ./start.sh
 ```
 
-The script creates a virtualenv in `.venv/`, installs the dependencies,
-initialises the SQLite database in `data/`, and starts the FastAPI server
-with auto-reload.
+`start.sh` creates a Python virtualenv in `.venv/`, installs deps,
+initialises the SQLite database in `data/`, and starts the FastAPI
+server with auto-reload. The React bundle you just built is served
+out of `frontend-react/dist/`.
 
 Then open:
 
@@ -105,6 +151,10 @@ Then open:
 - From any phone / tablet / PC on the same LAN: `http://<host-ip>:8000`
 
 Stop with `Ctrl+C`, or `./stop.sh` if it was launched in the background.
+
+> Prefer not to install Node? Use the Docker flow below — its
+> `frontend-builder` stage runs `npm install && npm run build` inside
+> the image, so the host only needs Docker.
 
 ### macOS one-click (recommended for non-developers)
 
@@ -228,11 +278,12 @@ will not find any miner** because the container can't see your
 
 ```
                   ┌─────────────────────────┐    ┌─────────────────┐
-                  │  Browser (Chrome / etc) │    │   Telegram app  │
-                  │  index · miner · setts  │    │   (phone, etc)  │
-                  └────────────┬────────────┘    └────────▲────────┘
+                  │  Browser (React SPA,    │    │   Telegram app  │
+                  │  Vite + Tailwind +      │    │   (phone, etc)  │
+                  │  Shadcn + Recharts)     │    └────────▲────────┘
+                  └────────────┬────────────┘             │  Bot API
                                │  HTTP / WebPush          │
-                               ▼                          │  Bot API
+                               ▼                          │
    ┌─────────────────────────────────────────────────────────────────┐
    │                          FastAPI app                            │
    │  main.py  ·  auth.py  ·  alerts.py  ·  auto_control.py (PID)    │

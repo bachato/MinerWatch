@@ -163,117 +163,35 @@ async def auth_middleware(request: Request, call_next):
     return response
 
 
-# ---------- Pages ----------
-
-@app.get("/", include_in_schema=False)
-async def index() -> Response:
-    return FileResponse(FRONTEND_DIR / "index.html")
-
-
-@app.get("/miner/{miner_id}", include_in_schema=False)
-async def miner_page(miner_id: int) -> Response:  # noqa: ARG001
-    return FileResponse(FRONTEND_DIR / "miner.html")
-
-
-@app.get("/settings", include_in_schema=False)
-async def settings_page() -> Response:
-    return FileResponse(FRONTEND_DIR / "settings.html")
-
-
-@app.get("/analytics", include_in_schema=False)
-async def analytics_page() -> Response:
-    """Analytics dashboard.
-
-    Hosts the Predictions widget and the Top best shares leaderboard.
-    The page itself is a thin shell; the widgets are rendered by
-    ``frontend/static/analytics.js`` which reuses the same renderers
-    the dashboard used before the widgets were moved to a dedicated
-    page.
-    """
-    return FileResponse(FRONTEND_DIR / "analytics.html")
-
-
-@app.get("/system", include_in_schema=False)
-async def system_page() -> Response:
-    """Host-system stats page (Raspberry Pi-focused).
-
-    Served on every host; the page itself bails out and shows an
-    "only available on Raspberry Pi" message if /api/system/info reports
-    is_raspberry=False — keeps the URL stable for dev/testing on macOS.
-    """
-    return FileResponse(FRONTEND_DIR / "system.html")
-
-
-@app.get("/login", include_in_schema=False)
-async def login_page() -> Response:
-    return FileResponse(FRONTEND_DIR / "login.html")
-
-
-@app.get("/sw.js", include_in_schema=False)
-async def service_worker() -> Response:
-    return FileResponse(FRONTEND_DIR / "sw.js", media_type="application/javascript")
-
-
-@app.get("/favicon.ico", include_in_schema=False)
-async def favicon() -> Response:
-    fav = FRONTEND_DIR / "static" / "favicon.svg"
-    if fav.exists():
-        return FileResponse(fav, media_type="image/svg+xml")
-    return Response(status_code=204)
-
-
-# Static
-# This directory may not exist on first run: create it now.
-(FRONTEND_DIR / "static").mkdir(parents=True, exist_ok=True)
-
-
-class _NoCacheStaticFiles(StaticFiles):
-    """StaticFiles with a ``Cache-Control: no-cache`` header on every response.
-
-    Without it, browsers cache LAN CSS/JS aggressively and frontend updates
-    (e.g. a new chart) require a manual hard-reload to show up. With
-    ``no-cache`` the browser always revalidates with the server
-    (ETag/Last-Modified), so we don't need to bump asset versions.
-    """
-
-    def is_not_modified(self, response_headers, request_headers) -> bool:  # type: ignore[override]
-        return super().is_not_modified(response_headers, request_headers)
-
-    def file_response(self, *args, **kwargs):  # type: ignore[override]
-        resp = super().file_response(*args, **kwargs)
-        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
-        return resp
-
-
-app.mount(
-    "/static",
-    _NoCacheStaticFiles(directory=str(FRONTEND_DIR / "static")),
-    name="static",
-)
-
-
-# ---------- React frontend (work-in-progress) ----------
+# ---------- Frontend (React SPA) ----------
 #
-# The new TypeScript/React UI lives in `frontend-react/` and gets
-# compiled to `frontend-react/dist/`. We serve it under /v2/* while the
-# migration is in progress; the legacy vanilla UI stays the canonical
-# entry point at /. SPA routing means any sub-path under /v2/ that
-# doesn't map to a static asset should fall back to /v2/index.html so
-# React Router can handle it client-side.
+# The MinerWatch UI is a single-page React app built from
+# `frontend-react/` into `frontend-react/dist/`. FastAPI serves the
+# bundle directly:
+#
+#   - /assets/*       → hashed JS/CSS chunks emitted by Vite
+#   - /sw.js          → service worker for Web Push
+#   - /favicon.svg    → favicon
+#   - everything else → dist/index.html, so React Router can handle
+#                       client-side routes (/, /miner/:id, /settings,
+#                       /analytics, /system, /login)
+#
+# The legacy vanilla frontend was retired in P1 session 5; its sources
+# are still in git history if you ever need to look back at them.
 
-REACT_DIST = FRONTEND_DIR.parent / "frontend-react" / "dist"
+REACT_DIST = FRONTEND_DIR  # alias for clarity: dist is now the only frontend
 
 
-@app.get("/v2", include_in_schema=False)
-@app.get("/v2/", include_in_schema=False)
-async def react_index() -> Response:
+def _react_index_response() -> Response:
+    """Serve dist/index.html, or a 503 with a setup hint if not built yet."""
     index = REACT_DIST / "index.html"
     if not index.exists():
         return JSONResponse(
             {
                 "detail": (
-                    "frontend-react not built yet. Run `cd frontend-react && "
-                    "npm install && npm run build`."
+                    "Frontend not built yet. Run `cd frontend-react && "
+                    "npm install && npm run build` on the host, or rebuild "
+                    "the Docker image (the Dockerfile builds it for you)."
                 )
             },
             status_code=503,
@@ -281,37 +199,55 @@ async def react_index() -> Response:
     return FileResponse(index, media_type="text/html")
 
 
-if REACT_DIST.exists():
-    # Static assets emitted by Vite (hashed JS/CSS chunks, plus anything
-    # else under dist/). The base path is /v2/ so vite.config.ts's
-    # `base: '/v2/'` lines up with what the browser asks for.
-    app.mount(
-        "/v2/assets",
-        _NoCacheStaticFiles(directory=str(REACT_DIST / "assets")),
-        name="v2-assets",
-    )
+# Make sure the assets dir exists on first boot so the mount below
+# doesn't blow up — the actual files arrive when `npm run build` runs.
+(REACT_DIST / "assets").mkdir(parents=True, exist_ok=True)
 
 
+# Vite-emitted JS/CSS chunks. They include a content hash in the
+# filename, so we can ask the browser to cache them aggressively: a
+# change to the bundle = a new filename = a guaranteed cache miss.
+app.mount(
+    "/assets",
+    StaticFiles(directory=str(REACT_DIST / "assets")),
+    name="assets",
+)
+
+
+@app.get("/sw.js", include_in_schema=False)
+async def service_worker() -> Response:
+    """Web Push service worker. Lives at the root so its scope covers /."""
+    sw = REACT_DIST / "sw.js"
+    if not sw.exists():
+        return Response(status_code=404)
+    return FileResponse(sw, media_type="application/javascript")
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon_svg() -> Response:
+    fav = REACT_DIST / "favicon.svg"
+    if not fav.exists():
+        return Response(status_code=404)
+    return FileResponse(fav, media_type="image/svg+xml")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico() -> Response:
+    # Some browsers still probe for /favicon.ico even when the HTML
+    # declares <link rel="icon" href="/favicon.svg">. Redirect them.
+    fav = REACT_DIST / "favicon.svg"
+    if not fav.exists():
+        return Response(status_code=204)
+    return FileResponse(fav, media_type="image/svg+xml")
+
+
+# Legacy /v2/* paths from the staging period — keep them alive for a
+# bit so any bookmark or open tab still works.
+@app.get("/v2", include_in_schema=False)
 @app.get("/v2/{path:path}", include_in_schema=False)
-async def react_catchall(path: str) -> Response:
-    """SPA fallback for client-side routes (/v2/analytics, /v2/miner/3 …).
-
-    React Router owns the routes; the server only needs to return the
-    same index.html for any unknown path so the JS bundle can take
-    over. Real files (like dist/manifest.json, were we to add one)
-    are still served by the StaticFiles mount above — this handler is
-    only reached when the path doesn't match a built asset.
-    """
-    candidate = REACT_DIST / path
-    if candidate.is_file():
-        return FileResponse(candidate)
-    index = REACT_DIST / "index.html"
-    if not index.exists():
-        return JSONResponse(
-            {"detail": "frontend-react not built yet"},
-            status_code=503,
-        )
-    return FileResponse(index, media_type="text/html")
+async def v2_redirect(path: str = "") -> Response:
+    target = f"/{path}" if path else "/"
+    return RedirectResponse(url=target, status_code=308)
 
 
 # ---------- API: miners ----------
@@ -1126,3 +1062,24 @@ async def api_telegram_discover_chat_id() -> dict:
 
 
 
+
+
+# ---------- SPA catch-all ----------
+#
+# Anything that hasn't matched an /api/*, /assets/*, /sw.js or
+# /favicon route up to here is a client-side route owned by React
+# Router. Serve dist/index.html so the bundle takes over and resolves
+# the URL on the browser side.
+#
+# This route is registered last on purpose: FastAPI matches routes in
+# registration order, and a /{path:path} catch-all defined earlier
+# would shadow every API endpoint above.
+
+@app.get("/", include_in_schema=False)
+async def spa_root() -> Response:
+    return _react_index_response()
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_catchall(full_path: str) -> Response:  # noqa: ARG001
+    return _react_index_response()
