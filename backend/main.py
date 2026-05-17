@@ -38,6 +38,7 @@ from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
+from . import updater
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +46,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("minerwatch")
 
-app = FastAPI(title="MinerWatch", version="0.1.0")
+app = FastAPI(title="MinerWatch", version=updater.read_version())
 
 # CORS — accept any origin that lives on the local network (mDNS
 # `*.local`, RFC1918 IPv4 ranges, IPv6 link-local/ULA, plus
@@ -168,7 +169,7 @@ async def auth_middleware(request: Request, call_next):
     # cache is aggressive enough to serve stale content even after the
     # cookie has been set. Static assets keep their own cache policy.
     is_html_page = (
-        path in {"/", "/settings", "/analytics", "/system", "/login"}
+        path in {"/", "/settings", "/analytics", "/system", "/update", "/login"}
         or path.startswith("/miner/")
     )
     if cfg.auth.enabled and is_html_page:
@@ -301,6 +302,64 @@ class MinerCreate(BaseModel):
 @app.get("/api/health")
 async def health() -> dict:
     return {"status": "ok", "version": app.version}
+
+
+# ---------- API: version & self-update ----------
+#
+# Three small endpoints power the "Update" page in the SPA:
+#
+#   GET  /api/version         → installed version + host OS info.
+#   GET  /api/update/check    → comparison with the latest GitHub
+#                               release. Cached 6h on disk to stay
+#                               under the anonymous GitHub rate limit.
+#   POST /api/update/install  → download + verify SHA256 + swap files
+#                               + schedule an os._exit(1) so the
+#                               LaunchAgent / systemd unit relaunches
+#                               us. The install endpoint stays behind
+#                               the same auth gate as the rest of the
+#                               write API (it's destructive); the two
+#                               read endpoints are public so the
+#                               sidebar badge can render before login.
+
+@app.get("/api/version")
+async def api_version() -> dict:
+    return {
+        "version": updater.read_version(),
+        "system": updater.system_summary(),
+    }
+
+
+@app.get("/api/update/check")
+async def api_update_check(force: bool = False) -> dict:
+    """Hit GitHub Releases and return the diff against the local VERSION.
+
+    Returns the :class:`updater.UpdateCheckResult` shape directly so
+    the frontend can spread it into the UI. On any failure, the
+    response still contains ``current`` and ``available: false`` plus
+    a short ``error`` code (``no_releases``, ``rate_limited``,
+    ``network_error``, ``github_http_<code>``) so the UI can render a
+    sensible message instead of throwing.
+    """
+    result = await updater.check_for_update(force=force)
+    # asdict avoids leaking the dataclass identity to JSON consumers
+    # and gives the SPA a plain object to consume.
+    from dataclasses import asdict as _asdict
+    return _asdict(result)
+
+
+@app.post("/api/update/install")
+async def api_update_install() -> dict:
+    """Kick off the self-update.
+
+    Returns immediately with ``{"status": "restarting", ...}`` — the
+    actual process exit is deferred ~1.5 s so this response can flush
+    to the frontend, which then polls ``/api/version`` until the new
+    version answers (signalling that the relaunched process is up).
+    """
+    try:
+        return await updater.install_update()
+    except updater.UpdateError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.get("/api/miners")

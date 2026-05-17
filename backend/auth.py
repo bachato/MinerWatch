@@ -141,6 +141,13 @@ def public_paths(path: str) -> bool:
         "/login",
         "/api/auth/login",
         "/api/auth/status",
+        # Public version + update-check so the login page and the
+        # sidebar can show the running version and the "update
+        # available" badge before the user signs in. The actual
+        # /api/update/install POST stays protected — it's destructive
+        # and falls through to require_auth like every other write.
+        "/api/version",
+        "/api/update/check",
         "/sw.js",
         "/assets/",
         "/static/",

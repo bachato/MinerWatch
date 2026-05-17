@@ -5,6 +5,8 @@ import {
   Activity,
   BarChart3,
   Cpu,
+  Download,
+  Heart,
   Menu,
   Server,
   Settings as SettingsIcon,
@@ -12,6 +14,8 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { DonateDialog } from '@/components/DonateDialog';
+import { useUpdateCheck } from '@/api/hooks';
 
 // MinerWatch's persistent shell:
 //   - on >= md (≥ 768 px) a 240 px sidebar on the left with the four
@@ -23,80 +27,165 @@ import { cn } from '@/lib/utils';
 // Every route inside AppShell renders into <Outlet />, so individual
 // pages don't have to redeclare the chrome.
 
-interface NavItem {
-  to: string;
+// Two kinds of sidebar entries:
+//   - LinkNavItem renders as a <NavLink>, taking the user to a route.
+//   - ActionNavItem renders as a <button>, firing a callback (used for
+//     the Donate entry, which opens a modal instead of navigating).
+// The discriminator is the `kind` field.
+interface BaseNavItem {
   label: string;
   icon: React.ComponentType<{ className?: string }>;
   description: string;
+  /** Tailwind class for the icon's *resting* colour, overriding the
+   *  default muted-foreground (used to keep the Donate heart red). */
+  iconClassName?: string;
+  /** When true, render a small dot indicator next to the label (used
+   *  for "update available" on the Update entry). */
+  badge?: boolean;
+}
+
+interface LinkNavItem extends BaseNavItem {
+  kind: 'link';
+  to: string;
   end?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  {
-    to: '/',
-    label: 'Dashboard',
-    icon: Activity,
-    description: 'Fleet overview',
-    end: true,
-  },
-  {
-    to: '/analytics',
-    label: 'Analytics',
-    icon: BarChart3,
-    description: 'Predictions & records',
-  },
-  {
-    to: '/settings',
-    label: 'Settings',
-    icon: SettingsIcon,
-    description: 'Configuration',
-  },
-  {
-    to: '/system',
-    label: 'System',
-    icon: Server,
-    description: 'Host metrics',
-  },
-];
+interface ActionNavItem extends BaseNavItem {
+  kind: 'action';
+  onClick: () => void;
+}
+
+type NavItem = LinkNavItem | ActionNavItem;
 
 interface NavListProps {
   onNavigate?: () => void;
+  onDonateClick: () => void;
+  updateAvailable: boolean;
 }
 
-function NavList({ onNavigate }: NavListProps) {
+function NavList({ onNavigate, onDonateClick, updateAvailable }: NavListProps) {
+  const items: NavItem[] = [
+    {
+      kind: 'link',
+      to: '/',
+      label: 'Dashboard',
+      icon: Activity,
+      description: 'Fleet overview',
+      end: true,
+    },
+    {
+      kind: 'link',
+      to: '/analytics',
+      label: 'Analytics',
+      icon: BarChart3,
+      description: 'Predictions & records',
+    },
+    {
+      kind: 'link',
+      to: '/settings',
+      label: 'Settings',
+      icon: SettingsIcon,
+      description: 'Configuration',
+    },
+    {
+      kind: 'link',
+      to: '/system',
+      label: 'System',
+      icon: Server,
+      description: 'Host metrics',
+    },
+    {
+      kind: 'link',
+      to: '/update',
+      label: 'Update',
+      icon: Download,
+      description: 'Check for new versions',
+      badge: updateAvailable,
+    },
+    {
+      kind: 'action',
+      onClick: () => {
+        onDonateClick();
+        onNavigate?.();
+      },
+      label: 'Donate',
+      icon: Heart,
+      description: 'Support MinerWatch',
+      // Red outline only (lucide Heart is outline by default).
+      iconClassName: 'text-red-500',
+    },
+  ];
+
+  // Shared inner layout for both kinds, so the action button and the
+  // NavLink stay visually identical (same paddings, gaps, typography).
+  const renderInner = (
+    item: NavItem,
+    state: { isActive: boolean; isHover: boolean },
+  ) => (
+    <>
+      <item.icon
+        className={cn(
+          'h-4 w-4 shrink-0',
+          item.iconClassName ??
+            (state.isActive
+              ? 'text-primary'
+              : 'text-muted-foreground group-hover:text-foreground'),
+        )}
+      />
+      <div className="flex min-w-0 flex-1 flex-col leading-tight">
+        <span className="flex items-center gap-2 font-medium">
+          {item.label}
+          {item.badge && (
+            <span
+              aria-label="Update available"
+              className="inline-block h-1.5 w-1.5 rounded-full bg-red-500"
+            />
+          )}
+        </span>
+        <span className="text-[11px] text-muted-foreground">{item.description}</span>
+      </div>
+    </>
+  );
+
   return (
     <nav className="flex-1 space-y-1">
-      {NAV_ITEMS.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.end}
-          onClick={onNavigate}
-          className={({ isActive }) =>
-            cn(
-              'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-              isActive
-                ? 'bg-primary/15 text-foreground'
-                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-            )
-          }
-        >
-          {({ isActive }) => (
-            <>
-              <item.icon
-                className={cn(
-                  'h-4 w-4 shrink-0',
-                  isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
-                )}
-              />
-              <div className="flex flex-col leading-tight">
-                <span className="font-medium">{item.label}</span>
-                <span className="text-[11px] text-muted-foreground">{item.description}</span>
-              </div>
-            </>
-          )}
-        </NavLink>
-      ))}
+      {items.map((item) => {
+        if (item.kind === 'link') {
+          return (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end={item.end}
+              onClick={onNavigate}
+              className={({ isActive }) =>
+                cn(
+                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+                  isActive
+                    ? 'bg-primary/15 text-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+                )
+              }
+            >
+              {({ isActive }) =>
+                renderInner(item, { isActive, isHover: false })
+              }
+            </NavLink>
+          );
+        }
+        return (
+          <button
+            key={item.label}
+            type="button"
+            onClick={item.onClick}
+            className={cn(
+              'group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors',
+              'text-muted-foreground hover:bg-accent hover:text-foreground',
+            )}
+          >
+            {renderInner(item, { isActive: false, isHover: false })}
+          </button>
+        );
+      })}
     </nav>
   );
 }
@@ -124,10 +213,14 @@ function Brand({ compact = false }: { compact?: boolean }) {
   );
 }
 
-function Footer() {
+function Footer({ version }: { version?: string }) {
+  // Until the /api/version response lands we still want *something* in
+  // the corner — fall back to "·" so the line keeps its height and the
+  // layout doesn't pop when the value arrives.
+  const display = version ? `v${version} · local` : '· local';
   return (
     <div className="border-t border-border pt-4 text-[11px] text-muted-foreground">
-      <div className="font-mono">v0.2 · local</div>
+      <div className="font-mono">{display}</div>
       <div className="mt-1">No cloud · AGPL-3.0</div>
     </div>
   );
@@ -135,7 +228,17 @@ function Footer() {
 
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [donateOpen, setDonateOpen] = useState(false);
   const location = useLocation();
+
+  // Update check: drives the red dot on the Update entry. Cached to
+  // 30min on the client; the backend itself caches the GitHub API
+  // response for 6h so we don't get rate-limited (60 req/h/IP for
+  // anonymous calls). We don't surface errors here — a failed check
+  // just leaves the badge off.
+  const { data: updateInfo } = useUpdateCheck();
+  const updateAvailable = Boolean(updateInfo?.available);
+  const version = updateInfo?.current;
 
   // Close the mobile drawer whenever the route changes — otherwise the
   // user taps a link and the drawer stays open over the new page.
@@ -150,8 +253,11 @@ export function AppShell() {
         <div className="mb-8">
           <Brand />
         </div>
-        <NavList />
-        <Footer />
+        <NavList
+          onDonateClick={() => setDonateOpen(true)}
+          updateAvailable={updateAvailable}
+        />
+        <Footer version={version} />
       </aside>
 
       {/* Mobile top bar — only on phones. Fixed so it stays visible
@@ -202,8 +308,12 @@ export function AppShell() {
               </DialogPrimitive.Close>
             </div>
 
-            <NavList onNavigate={() => setMobileOpen(false)} />
-            <Footer />
+            <NavList
+              onNavigate={() => setMobileOpen(false)}
+              onDonateClick={() => setDonateOpen(true)}
+              updateAvailable={updateAvailable}
+            />
+            <Footer version={version} />
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>
@@ -211,6 +321,10 @@ export function AppShell() {
       <main className="flex-1 min-w-0 px-4 pb-6 pt-20 md:px-8 md:py-8 md:pt-8">
         <Outlet />
       </main>
+
+      {/* Global donate dialog — single instance so it can be opened from
+          either the desktop sidebar or the mobile drawer. */}
+      <DonateDialog open={donateOpen} onOpenChange={setDonateOpen} />
     </div>
   );
 }

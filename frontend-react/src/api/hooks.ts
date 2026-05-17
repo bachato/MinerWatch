@@ -19,6 +19,9 @@ import type {
   SystemInfo,
   SystemSnapshot,
   TelegramDiscoverResponse,
+  UpdateCheckResponse,
+  UpdateInstallResponse,
+  VersionResponse,
 } from '@/lib/types';
 
 // React Query hooks wrapping the /api endpoints MinerWatch exposes.
@@ -339,5 +342,63 @@ export function useSetSystemFan() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['system', 'snapshot'] });
     },
+  });
+}
+
+// ---------- Self-update hooks ----------
+//
+// useVersion: tiny `{version, system}` payload. Used by the footer and
+//   the Update page header. ``staleTime: Infinity`` because the value
+//   only changes after a restart — we re-fetch on focus instead.
+//
+// useUpdateCheck: drives the sidebar badge and the Update page body.
+//   Refetched every 30 minutes; the backend itself caches the GitHub
+//   response for 6 hours so this hook is cheap on the wire.
+//
+// useInstallUpdate: kicks off the install. The mutation returns when
+//   the *response* lands (status: "restarting"); the process exits
+//   shortly after, and the Update page is responsible for polling
+//   /api/version until it answers again.
+
+export function useVersion() {
+  return useQuery({
+    queryKey: ['version'],
+    queryFn: ({ signal }) => api<VersionResponse>('/api/version', { signal }),
+    staleTime: Infinity,
+    refetchOnWindowFocus: true,
+    // Silent failure (e.g. backend just restarted): keep the previous
+    // value rather than tripping the page's error boundary.
+    retry: 2,
+  });
+}
+
+export function useUpdateCheck() {
+  return useQuery({
+    queryKey: ['update-check'],
+    queryFn: ({ signal }) =>
+      api<UpdateCheckResponse>('/api/update/check', { signal }),
+    // 30 min between background polls. The backend cache means most
+    // of these are no-ops on the network.
+    refetchInterval: 30 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
+  });
+}
+
+export function useForceUpdateCheck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<UpdateCheckResponse>('/api/update/check?force=true'),
+    onSuccess: (data) => {
+      qc.setQueryData(['update-check'], data);
+    },
+  });
+}
+
+export function useInstallUpdate() {
+  return useMutation({
+    mutationFn: () =>
+      api<UpdateInstallResponse>('/api/update/install', { method: 'POST' }),
   });
 }
