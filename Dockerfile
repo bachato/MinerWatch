@@ -95,12 +95,11 @@ WORKDIR /app
 # .venv/, .git/, __pycache__, .DS_Store, etc., so this is just the
 # pieces the running app actually needs.
 COPY --chown=minerwatch:minerwatch backend            ./backend
-COPY --chown=minerwatch:minerwatch frontend           ./frontend
 COPY --chown=minerwatch:minerwatch config.example.yaml ./config.example.yaml
 
-# React build output from stage 0. The path inside the image
-# (./frontend-react/dist) is what backend/main.py computes for
-# REACT_DIST, so /v2/* "just works" out of the box.
+# React build output from stage 0. backend/config.py points
+# FRONTEND_DIR at /app/frontend-react/dist, so this is where the SPA
+# (and /sw.js, /favicon.svg, /assets/*) is served from.
 COPY --chown=minerwatch:minerwatch --from=frontend-builder /build/dist ./frontend-react/dist
 
 # Persistent runtime data: SQLite DB, VAPID keys, push subscriptions

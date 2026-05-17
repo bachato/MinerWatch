@@ -17,9 +17,9 @@ import './index.css';
 //     two components mounting at the same time share one fetch), and
 //     failures retry once with a tiny backoff. Per-query overrides
 //     happen in the hooks under src/api/hooks.ts.
-//   - BrowserRouter uses HTML5 history. The basename matches the Vite
-//     `base` (/v2/) so links inside the app stay relative to the new
-//     prefix during the migration.
+//   - BrowserRouter uses HTML5 history. Basename is "/" because the
+//     React app is now the canonical UI (the legacy vanilla frontend
+//     was retired in P1 session 5).
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -33,7 +33,7 @@ const queryClient = new QueryClient({
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter basename="/v2">
+      <BrowserRouter>
         <App />
       </BrowserRouter>
     </QueryClientProvider>

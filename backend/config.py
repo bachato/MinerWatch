@@ -17,7 +17,11 @@ import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT_DIR / "data"
-FRONTEND_DIR = ROOT_DIR / "frontend"
+# FRONTEND_DIR points at the React bundle Vite emits. The legacy
+# vanilla frontend at ./frontend/ was retired in P1 session 5; if you
+# need to recover one of its files, check git history before the
+# session-5 commit.
+FRONTEND_DIR = ROOT_DIR / "frontend-react" / "dist"
 
 
 @dataclass
