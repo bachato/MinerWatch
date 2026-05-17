@@ -47,20 +47,33 @@ log = logging.getLogger("minerwatch")
 
 app = FastAPI(title="MinerWatch", version="0.1.0")
 
-# CORS restricted to the exact origin(s) actually used to open the
-# dashboard. Listing each origin explicitly (rather than reflecting back
-# whatever Origin header the request carries) means a malicious page in
-# another tab cannot trick the browser into letting its own JavaScript
-# read MinerWatch's responses, even if the user is logged in.
+# CORS — accept any origin that lives on the local network (mDNS
+# `*.local`, RFC1918 IPv4 ranges, IPv6 link-local/ULA, plus
+# localhost/127.0.0.1). We still refuse public origins, so a malicious
+# site on the open web can't trick the browser into reading
+# MinerWatch's responses just because the user is logged in.
 #
-# If you start opening MinerWatch from a different origin (new hostname,
-# different port, https instead of http, raw LAN IP, SSH tunnel on
-# 127.0.0.1, …), add that origin to the list. Symptom of a missing entry:
-# the page loads but API calls fail in the browser console with messages
-# like "blocked by CORS policy".
+# We use `allow_origin_regex` rather than enumerating every possible
+# host because MinerWatch is reached from a mix of mDNS hostnames
+# (denver.local), raw LAN IPs (192.168.x.y, 10.x, 172.16-31.x), and on
+# iOS Bonjour resolution sometimes silently falls back to the IP. With
+# a fixed allow-list every device fails on a different morning.
+PRIVATE_ORIGIN_REGEX = (
+    r"^https?://("
+    r"localhost"
+    r"|127\.0\.0\.1"
+    r"|\[::1\]"
+    r"|[a-zA-Z0-9-]+\.local"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}"
+    r"|172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3}"
+    r"|\[fe80::[0-9a-fA-F:]+(%[0-9a-zA-Z]+)?\]"
+    r"|\[fd[0-9a-fA-F]{2}:[0-9a-fA-F:]*\]"
+    r")(:\d+)?$"
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://denver.local:8000"],
+    allow_origin_regex=PRIVATE_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -183,7 +196,18 @@ REACT_DIST = FRONTEND_DIR  # alias for clarity: dist is now the only frontend
 
 
 def _react_index_response() -> Response:
-    """Serve dist/index.html, or a 503 with a setup hint if not built yet."""
+    """Serve dist/index.html, or a 503 with a setup hint if not built yet.
+
+    The index.html references hashed asset bundles under /assets/<hash>.js.
+    iOS Safari and Chrome iOS keep an aggressive HTTP cache that will
+    happily serve an old index.html for hours after a new deploy — and
+    that old index.html points at /assets/ chunks that no longer exist
+    on disk, producing a blank page on iPad/iPhone with no error in the
+    UI. We always set Cache-Control: no-store on the HTML shell to make
+    sure every page load fetches the current entry point. The hashed
+    assets themselves keep their own (long, immutable) cache policy via
+    the StaticFiles mount below.
+    """
     index = REACT_DIST / "index.html"
     if not index.exists():
         return JSONResponse(
@@ -196,7 +220,11 @@ def _react_index_response() -> Response:
             },
             status_code=503,
         )
-    return FileResponse(index, media_type="text/html")
+    return FileResponse(
+        index,
+        media_type="text/html",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 # Make sure the assets dir exists on first boot so the mount below
@@ -216,11 +244,20 @@ app.mount(
 
 @app.get("/sw.js", include_in_schema=False)
 async def service_worker() -> Response:
-    """Web Push service worker. Lives at the root so its scope covers /."""
+    """Web Push service worker. Lives at the root so its scope covers /.
+
+    The SW script must never be cached: if we ship a new version, every
+    browser needs to pick it up on the next visit so its activate
+    handler can purge stale caches and unregister old behaviour.
+    """
     sw = REACT_DIST / "sw.js"
     if not sw.exists():
         return Response(status_code=404)
-    return FileResponse(sw, media_type="application/javascript")
+    return FileResponse(
+        sw,
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-store, must-revalidate"},
+    )
 
 
 @app.get("/favicon.svg", include_in_schema=False)

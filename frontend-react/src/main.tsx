@@ -30,6 +30,43 @@ const queryClient = new QueryClient({
   },
 });
 
+// One-shot self-healing: if a previous version of MinerWatch installed
+// a service worker that intercepted page loads (or registered HTTP
+// caches), iOS Safari / Chrome iOS keep it around indefinitely. The
+// current `/sw.js` only handles Web Push and has no fetch handler, so
+// stale workers can only do harm. We clear them here on every boot,
+// before React mounts, so the next reload starts from a known-good
+// state. The cost on a clean browser is one no-op iteration.
+function purgeStaleServiceWorkers(): void {
+  if (typeof navigator === 'undefined') return;
+  if (!('serviceWorker' in navigator)) return;
+  // Fire and forget — we never want to block the React tree on this.
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((regs) => {
+      for (const reg of regs) {
+        const swUrl = reg.active?.scriptURL ?? '';
+        // Only purge SWs that are not the current /sw.js. The push
+        // settings page will re-register the live one on demand. If a
+        // user has never opened Settings, the iPad just has no SW —
+        // which is the desired state.
+        if (!swUrl.endsWith('/sw.js')) {
+          reg.unregister().catch(() => undefined);
+        }
+      }
+    })
+    .catch(() => undefined);
+
+  if ('caches' in window) {
+    caches
+      .keys()
+      .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+      .catch(() => undefined);
+  }
+}
+
+purgeStaleServiceWorkers();
+
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
