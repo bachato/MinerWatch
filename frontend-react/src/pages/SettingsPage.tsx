@@ -1,44 +1,107 @@
-import { Settings as SettingsIcon } from 'lucide-react';
+import { useState } from 'react';
+import { Save } from 'lucide-react';
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
+import { GeneralTab } from '@/components/settings/GeneralTab';
+import { AlertsTab } from '@/components/settings/AlertsTab';
+import { NotificationsTab } from '@/components/settings/NotificationsTab';
+import { SecurityTab } from '@/components/settings/SecurityTab';
+import { formToOverrides, useSettingsForm } from '@/components/settings/SettingsForm';
+import { useSaveSettings, useSettings } from '@/api/hooks';
+import { ApiError } from '@/lib/api';
 
+/**
+ * Settings page.
+ *
+ * Form state is held in `useSettingsForm` (a thin useState wrapper)
+ * and seeded by the /api/settings response. Save sends a single POST
+ * with all the dotted-key overrides. After a successful save the
+ * write-only fields (telegramBotToken, authPassword) are cleared and
+ * the settings query is invalidated so the rest of the app picks up
+ * the new values.
+ */
 export function SettingsPage() {
+  const { data, isLoading } = useSettings();
+  const [form, setForm] = useSettingsForm(data?.current);
+  const save = useSaveSettings();
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSave() {
+    if (!form) return;
+    setMessage(null);
+    setError(null);
+    try {
+      await save.mutateAsync(formToOverrides(form));
+      // Clear the secrets so they don't linger in the DOM
+      setForm({ ...form, telegramBotToken: '', authPassword: '' });
+      setMessage('Settings saved.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : (err as Error).message);
+    }
+  }
+
+  if (isLoading || !form) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-1/3" />
+        <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-6">
-      <header className="flex items-end justify-between gap-4">
+    <div className="space-y-5">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
           <p className="text-sm text-muted-foreground">
             Configuration, alerts, notifications and security
           </p>
         </div>
+        <Button onClick={handleSave} disabled={save.isPending}>
+          <Save className="h-4 w-4" />
+          {save.isPending ? 'Saving…' : 'Save all'}
+        </Button>
       </header>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-chart-performance/15 text-chart-performance">
-              <SettingsIcon className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle>Settings migration in progress</CardTitle>
-              <CardDescription>
-                The four-tab layout from the classic page (General / Alerts / Notifications /
-                Security) will be ported here.
-              </CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            For now use{' '}
-            <a className="text-primary hover:underline" href="/settings">
-              the classic Settings page
-            </a>
-            . Anything you change there is shared with this frontend.
-          </p>
-        </CardContent>
-      </Card>
+      {(message || error) && (
+        <p
+          className={`rounded-md border px-3 py-2 text-sm ${
+            error
+              ? 'border-destructive/40 bg-destructive/10 text-destructive'
+              : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+          }`}
+          role="status"
+        >
+          {error ?? message}
+        </p>
+      )}
+
+      <Tabs defaultValue="general" className="space-y-4">
+        <TabsList className="h-auto">
+          <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="alerts">Alerts</TabsTrigger>
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="general" className="mt-0">
+          <GeneralTab form={form} setForm={setForm} />
+        </TabsContent>
+        <TabsContent value="alerts" className="mt-0">
+          <AlertsTab form={form} setForm={setForm} />
+        </TabsContent>
+        <TabsContent value="notifications" className="mt-0">
+          <NotificationsTab form={form} setForm={setForm} />
+        </TabsContent>
+        <TabsContent value="security" className="mt-0">
+          <SecurityTab form={form} setForm={setForm} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

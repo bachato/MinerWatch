@@ -162,9 +162,12 @@ export interface BlockFindsResponse {
   block_finds: BlockFind[];
 }
 
+// The backend returns one row per bucket as { bucket_ts, total_ths }.
+// We keep the names backend-exact so a stray rename here is loud
+// rather than silently producing an empty chart.
 export interface FleetHashratePoint {
-  ts: number;
-  hashrate_ths: number;
+  bucket_ts: number;
+  total_ths: number;
 }
 
 export interface FleetHashrateResponse {
@@ -268,4 +271,95 @@ export interface DiscoveryFound {
 export interface DiscoveryResponse {
   registered: number;
   miners: DiscoveryFound[];
+}
+
+export interface TelegramChat {
+  chat_id: string;
+  label: string;
+  type: string;
+}
+
+export interface TelegramDiscoverResponse {
+  chats: TelegramChat[];
+}
+
+export interface PushTestResponse {
+  subscribers: number;
+}
+
+// Host metrics surfaced by /api/system/info and /api/system/snapshot.
+// The shapes here mirror backend/system_info.py exactly: when in doubt
+// match the Python keys 1:1 rather than re-flattening, because the
+// backend returns nested groups (cpu/memory/disk/fan/throttled) and
+// every divergence is a silent rendering bug.
+
+export interface SystemInfo {
+  is_raspberry: boolean;
+  model: string | null;
+  kernel: string | null;
+  ram_total_bytes: number | null;
+  cpu_count: number | null;
+  has_vcgencmd: boolean;
+  fan: {
+    controllable: boolean;
+    max_state: number | null;
+    has_rpm: boolean;
+    cooling_path: string | null;
+    rpm_path: string | null;
+  };
+}
+
+export interface SystemCpu {
+  percent: number | null;
+  per_core: number[] | null;
+  freq_mhz: number | null;
+  freq_max_mhz: number | null;
+}
+
+export interface SystemMemory {
+  used_bytes: number | null;
+  total_bytes: number | null;
+  percent: number | null;
+}
+
+export interface SystemDisk {
+  used_bytes: number | null;
+  total_bytes: number | null;
+  free_bytes: number | null;
+  percent: number | null;
+}
+
+export interface SystemThrottled {
+  raw: string | null;
+  now_undervoltage: boolean | null;
+  now_freq_capped: boolean | null;
+  now_throttled: boolean | null;
+  now_soft_temp_limit: boolean | null;
+  ever_undervoltage: boolean | null;
+  ever_freq_capped: boolean | null;
+  ever_throttled: boolean | null;
+  ever_soft_temp_limit: boolean | null;
+}
+
+export interface SystemFanSnapshot {
+  controllable: boolean;
+  rpm: number | null;
+  state: number | null;
+  max_state: number | null;
+  percent: number | null;
+}
+
+export interface SystemSnapshot {
+  ts: number;
+  uptime_seconds: number | null;
+  load_average: [number, number, number] | null;
+  cpu: SystemCpu;
+  memory: SystemMemory;
+  swap: SystemMemory;
+  disk: SystemDisk;
+  temperature_c: number | null;
+  voltage_core: number | null;
+  throttled: SystemThrottled;
+  fan: SystemFanSnapshot;
+  db_size_bytes: number | null;
 }

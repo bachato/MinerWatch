@@ -232,11 +232,19 @@ function HardwareSection({ title, rows }: SectionProps) {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-2">
-        <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-2">
+        {/*
+          Two-column grid: label sized to its content, value gets the
+          rest. `minmax(0,1fr)` on the value column is what lets very
+          long strings (Bitcoin addresses, pool URLs) shrink instead of
+          pushing the card past its container. The `break-all` on the
+          <dd> spans them onto multiple lines when needed; short values
+          (numbers, units) are unaffected because they fit on one line.
+        */}
+        <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-2">
           {live.map((r) => (
             <div key={r.label} className="contents">
               <dt className="text-xs text-muted-foreground self-center">{r.label}</dt>
-              <dd className="text-right text-sm font-semibold tabular-nums">{r.value}</dd>
+              <dd className="min-w-0 break-all text-right text-sm font-semibold tabular-nums">{r.value}</dd>
             </div>
           ))}
         </dl>

@@ -14,7 +14,11 @@ import type {
   MinerDetailResponse,
   MinerListResponse,
   PredictionResponse,
+  PushTestResponse,
   SettingsResponse,
+  SystemInfo,
+  SystemSnapshot,
+  TelegramDiscoverResponse,
 } from '@/lib/types';
 
 // React Query hooks wrapping the /api endpoints MinerWatch exposes.
@@ -234,6 +238,106 @@ export function useAckAllAlerts() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+// ---------- Settings page hooks ----------
+
+export function useAllAlerts(limit = 50) {
+  return useQuery({
+    queryKey: ['alerts', 'all', limit],
+    queryFn: ({ signal }) =>
+      api<AlertsResponse>(`/api/alerts?limit=${limit}`, { signal }),
+    refetchInterval: 15_000,
+  });
+}
+
+export function useAckAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api(`/api/alerts/${id}/ack`, { method: 'POST' }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+}
+
+export function useSaveSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (overrides: Record<string, unknown>) =>
+      api('/api/settings', { method: 'POST', body: { overrides } }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['settings'] });
+    },
+  });
+}
+
+export function useTestPush() {
+  return useMutation({
+    mutationFn: () => api<PushTestResponse>('/api/push/test', { method: 'POST' }),
+  });
+}
+
+export function usePurgeAllPush() {
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: true; removed: number }>('/api/push/subscriptions/all', {
+        method: 'DELETE',
+      }),
+  });
+}
+
+export function useTelegramTest() {
+  return useMutation({
+    mutationFn: () => api('/api/telegram/test', { method: 'POST' }),
+  });
+}
+
+export function useTelegramDiscover() {
+  return useMutation({
+    mutationFn: () =>
+      api<TelegramDiscoverResponse>('/api/telegram/discover_chat_id'),
+  });
+}
+
+export function useLogout() {
+  return useMutation({
+    mutationFn: () => api('/api/auth/logout', { method: 'POST' }),
+  });
+}
+
+// ---------- System page hooks ----------
+
+export function useSystemInfo() {
+  return useQuery({
+    queryKey: ['system', 'info'],
+    queryFn: ({ signal }) => api<SystemInfo>('/api/system/info', { signal }),
+    staleTime: 5 * 60_000, // hardware info never changes within a session
+  });
+}
+
+export function useSystemSnapshot() {
+  return useQuery({
+    queryKey: ['system', 'snapshot'],
+    queryFn: ({ signal }) => api<SystemSnapshot>('/api/system/snapshot', { signal }),
+    refetchInterval: 5_000,
+  });
+}
+
+interface SystemFanPayload {
+  percent?: number;
+  state?: number;
+}
+
+export function useSetSystemFan() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: SystemFanPayload) =>
+      api('/api/system/fan', { method: 'POST', body: payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['system', 'snapshot'] });
     },
   });
 }
