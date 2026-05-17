@@ -363,3 +363,38 @@ export interface SystemSnapshot {
   fan: SystemFanSnapshot;
   db_size_bytes: number | null;
 }
+
+// ----- Self-update (/api/version, /api/update/check, /api/update/install)
+
+export interface VersionResponse {
+  version: string;
+  system: {
+    os: string; // Darwin | Linux | Windows
+    os_release: string;
+    machine: string;
+    python: string;
+  };
+}
+
+export interface UpdateCheckResponse {
+  current: string;
+  latest: string | null;
+  available: boolean;
+  release_notes_url: string | null;
+  release_name: string | null;
+  published_at: string | null;
+  asset_url: string | null;
+  asset_name: string | null;
+  asset_size: number | null;
+  sha256: string | null;
+  requires_service_reinstall: boolean;
+  error: string | null;
+  checked_at: number;
+}
+
+export interface UpdateInstallResponse {
+  status: 'restarting';
+  previous_version: string;
+  new_version: string;
+  requires_service_reinstall: boolean;
+}

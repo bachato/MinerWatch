@@ -6,6 +6,7 @@ import { AnalyticsPage } from '@/pages/AnalyticsPage';
 import { MinerPage } from '@/pages/MinerPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SystemPage } from '@/pages/SystemPage';
+import { UpdatePage } from '@/pages/UpdatePage';
 import { LoginPage } from '@/pages/LoginPage';
 
 // Top-level routing.
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/miner/:id" element={<MinerPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/system" element={<SystemPage />} />
+        <Route path="/update" element={<UpdatePage />} />
         <Route path="*" element={<DashboardPage />} />
       </Route>
     </Routes>

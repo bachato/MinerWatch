@@ -1,0 +1,133 @@
+# Build and publish a MinerWatch release.
+#
+# Trigger: pushing a tag that looks like ``v<MAJOR>.<MINOR>.<PATCH>``
+# (e.g. ``v0.3.0``). The job:
+#
+#   1. Bumps VERSION to match the tag (so the in-app /api/version
+#      endpoint reports the same number that's pinned in GitHub).
+#   2. Builds the React frontend (npm ci && npm run build) — the
+#      resulting ``frontend-react/dist/`` ships *inside* the release
+#      tarball, so end-users don't need Node installed to update.
+#   3. Packs the runtime tree into ``minerwatch-<version>.tar.gz``,
+#      excluding dev artefacts (.git, .venv, data/, node_modules,
+#      …).
+#   4. Computes SHA-256 for every artefact into ``checksums.txt``.
+#      The self-update flow downloads this file separately and
+#      verifies the tarball hash against it, so a tampered tarball
+#      can't fake its own checksum.
+#   5. Creates the GitHub Release with all artefacts attached. The
+#      release body is taken from CHANGELOG.md if present; otherwise
+#      auto-generated from commit messages between tags.
+#
+# Tag a release with:
+#   git tag v0.3.0 && git push origin v0.3.0
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write  # needed for softprops/action-gh-release
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history for changelog generation
+
+      - name: Compute version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"       >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building MinerWatch v$VERSION"
+
+      - name: Sync VERSION file to the tag
+        run: |
+          echo "${{ steps.ver.outputs.version }}" > VERSION
+          cat VERSION
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend-react/package-lock.json'
+
+      - name: Install frontend deps
+        working-directory: frontend-react
+        run: npm ci
+
+      - name: Build frontend bundle
+        working-directory: frontend-react
+        run: npm run build
+
+      - name: Pack release tarball
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          STAGE="minerwatch-$VERSION"
+
+          # Stage a clean copy of the runtime tree. We rsync into a
+          # named subdir so the tarball expands to ``minerwatch-<v>/``
+          # (matching what _find_extracted_root expects in backend/updater.py).
+          mkdir -p "release-stage/$STAGE"
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.venv/' \
+            --exclude='data/' \
+            --exclude='node_modules/' \
+            --exclude='__pycache__/' \
+            --exclude='*.pyc' \
+            --exclude='HANDOFF.md' \
+            --exclude='release-stage/' \
+            --exclude='.update-staging/' \
+            --exclude='.versions/' \
+            --exclude='.DS_Store' \
+            --exclude='reports/' \
+            ./ "release-stage/$STAGE/"
+
+          # Sanity check: tarball must contain the built dist/ — the
+          # whole point of building it in CI is that end-users skip Node.
+          test -f "release-stage/$STAGE/frontend-react/dist/index.html" || {
+            echo "Frontend dist missing — build step failed silently?"
+            exit 1
+          }
+          test -f "release-stage/$STAGE/VERSION" || {
+            echo "VERSION missing from stage"
+            exit 1
+          }
+
+          cd release-stage
+          tar -czf "../$STAGE.tar.gz" "$STAGE"
+          cd ..
+          ls -lh "$STAGE.tar.gz"
+
+      - name: Generate checksums.txt
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.ver.outputs.version }}"
+          # shasum -a 256 format = "<hex>  <name>" (two spaces), which
+          # is what backend/updater.py:_fetch_sha256 parses by splitting
+          # on whitespace and matching parts[-1] == asset_name.
+          shasum -a 256 "minerwatch-$VERSION.tar.gz" > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: MinerWatch ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: |
+            minerwatch-${{ steps.ver.outputs.version }}.tar.gz
+            checksums.txt
