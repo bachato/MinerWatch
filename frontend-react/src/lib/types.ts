@@ -6,7 +6,7 @@
 // Convention: we annotate optional/nullable fields with `| null` because
 // the Python backend returns `null` literally (it doesn't omit keys).
 
-export type MinerFamily = 'bitaxe' | 'canaan' | 'braiins';
+export type MinerFamily = 'bitaxe' | 'canaan' | 'braiins' | 'luxos';
 
 export interface MinerRecord {
   id: number;

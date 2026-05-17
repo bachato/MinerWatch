@@ -94,4 +94,5 @@ export const FAMILY_LABEL: Record<string, string> = {
   bitaxe: 'Bitaxe / NerdQAxe',
   canaan: 'Canaan / Avalon',
   braiins: 'Braiins / BMM',
+  luxos: 'LuxOS (Antminer)',
 };
