@@ -2,13 +2,105 @@
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f1115" />
     <title>MinerWatch</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Fallback styles: visible only if the JS bundle never paints
+         anything into #root. Lets the page show something useful
+         instead of a permanent blank screen on devices where the
+         bundle silently fails to start. -->
+    <style>
+      html, body, #root { height: 100%; }
+      body {
+        margin: 0;
+        background: #0f1115;
+        color: #e6e8ef;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      #mw-boot-error {
+        display: none;
+        max-width: 640px;
+        margin: 8vh auto;
+        padding: 20px;
+        background: #161a22;
+        border: 1px solid #232938;
+        border-radius: 10px;
+      }
+      #mw-boot-error h1 { font-size: 18px; margin: 0 0 8px; color: #ff8a8a; }
+      #mw-boot-error p  { color: #8b93a7; margin: 8px 0; }
+      #mw-boot-error pre {
+        background: #0f1115; border: 1px solid #232938; border-radius: 6px;
+        padding: 12px; overflow: auto; max-height: 40vh;
+        font-size: 12px; color: #e6e8ef;
+        white-space: pre-wrap; word-break: break-word;
+      }
+      #mw-boot-error button {
+        background: #5db0ff; color: #0f1115; border: 0;
+        padding: 8px 14px; border-radius: 6px; font-weight: 600;
+        margin-right: 8px; cursor: pointer;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- In-page error reporter. Surfaces JS / module load errors that
+         happen before React mounts so we can diagnose blank-screen
+         issues on devices without dev tools (iPad, Android tablets,
+         etc.). The script is intentionally pre-React and dependency-
+         free so it can survive any failure of the bundle. -->
+    <div id="mw-boot-error" role="alert" aria-live="assertive">
+      <h1>MinerWatch couldn't start</h1>
+      <p>
+        The interface failed to load. This is usually caused by a stale
+        cache or a script error. Try the actions below.
+      </p>
+      <pre id="mw-boot-error-detail"></pre>
+      <button onclick="(function(){
+        try { caches && caches.keys && caches.keys().then(function(ks){ ks.forEach(function(k){ caches.delete(k); }); }); } catch(e){}
+        try { navigator.serviceWorker && navigator.serviceWorker.getRegistrations && navigator.serviceWorker.getRegistrations().then(function(rs){ rs.forEach(function(r){ r.unregister(); }); }); } catch(e){}
+        setTimeout(function(){ location.reload(); }, 300);
+      })()">Clear cache & reload</button>
+      <button onclick="location.reload()">Reload</button>
+    </div>
+
+    <script>
+      // Capture pre-React errors and module load failures so the
+      // user is never stuck staring at a blank page with no
+      // explanation. Anything that surfaces here is gold for
+      // diagnosing what's going on on devices without dev tools.
+      (function () {
+        var detailEl = document.getElementById('mw-boot-error-detail');
+        var panelEl  = document.getElementById('mw-boot-error');
+        function show(msg) {
+          if (!panelEl) return;
+          panelEl.style.display = 'block';
+          if (detailEl) {
+            detailEl.textContent =
+              (detailEl.textContent ? detailEl.textContent + '\n\n' : '') + msg;
+          }
+        }
+        window.addEventListener('error', function (e) {
+          var src = e.filename || (e.target && (e.target.src || e.target.href)) || '';
+          show('JS error: ' + (e.message || '(no message)') + (src ? '\nin ' + src : ''));
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e.reason || {};
+          show('Unhandled promise: ' + (r.message || String(r)));
+        });
+        // If React hasn't painted anything into #root after 8s we
+        // assume the bundle is dead and surface a panel anyway so
+        // the user has *something* on screen.
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && !root.firstChild) {
+            show('React did not mount within 8 seconds — bundle likely failed to load. Check the network tab for /assets/*.js requests.');
+          }
+        }, 8000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

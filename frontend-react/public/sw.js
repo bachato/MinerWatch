@@ -1,11 +1,29 @@
-// MinerWatch service worker — Web Push management
+// MinerWatch service worker — Web Push management.
+//
+// This SW deliberately does NOT have a `fetch` handler: MinerWatch
+// pages should always come straight from the network so a stale SW
+// can never serve a bundle that references vanished /assets/<hash>.js
+// chunks (the classic "blank page after deploy" symptom on iOS).
+//
+// On activate we evict every cache the previous installation may have
+// created, then take control of all open clients so the cleanup is
+// immediate.
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
-    event.waitUntil(self.clients.claim());
+    event.waitUntil((async () => {
+        try {
+            const keys = await caches.keys();
+            await Promise.all(keys.map((k) => caches.delete(k)));
+        } catch (e) {
+            // best-effort — never fail activation just because cache
+            // eviction hit a quota / private-mode quirk on iOS.
+        }
+        await self.clients.claim();
+    })());
 });
 
 self.addEventListener('push', (event) => {

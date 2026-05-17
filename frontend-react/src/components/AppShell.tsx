@@ -1,17 +1,27 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { Activity, BarChart3, Cpu, Server, Settings as SettingsIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import * as DialogPrimitive from '@radix-ui/react-dialog';
+import {
+  Activity,
+  BarChart3,
+  Cpu,
+  Menu,
+  Server,
+  Settings as SettingsIcon,
+  X,
+} from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 
-// MinerWatch's persistent shell: sidebar on the left with the four main
-// nav entries, plus a slot for the page content on the right. Every
-// route inside AppShell renders into <Outlet />, so individual pages
-// don't have to redeclare the sidebar.
+// MinerWatch's persistent shell:
+//   - on >= md (≥ 768 px) a 240 px sidebar on the left with the four
+//     main nav entries, plus a slot for the page content on the right.
+//   - on < md (phones) the sidebar collapses to a fixed top bar with a
+//     hamburger that opens a slide-in drawer. The drawer carries the
+//     same NAV_ITEMS so nothing is lost on mobile.
 //
-// The shell deliberately leaves vertical space generous and the sidebar
-// width compact (240px). MinerSentinel uses ~260px; we go slightly
-// tighter so the data area gets more pixels — on a 1280px window every
-// 20px on the left side is one extra column of miner cards.
+// Every route inside AppShell renders into <Outlet />, so individual
+// pages don't have to redeclare the chrome.
 
 interface NavItem {
   to: string;
@@ -49,62 +59,156 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+interface NavListProps {
+  onNavigate?: () => void;
+}
+
+function NavList({ onNavigate }: NavListProps) {
+  return (
+    <nav className="flex-1 space-y-1">
+      {NAV_ITEMS.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            cn(
+              'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
+              isActive
+                ? 'bg-primary/15 text-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+            )
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <item.icon
+                className={cn(
+                  'h-4 w-4 shrink-0',
+                  isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
+                )}
+              />
+              <div className="flex flex-col leading-tight">
+                <span className="font-medium">{item.label}</span>
+                <span className="text-[11px] text-muted-foreground">{item.description}</span>
+              </div>
+            </>
+          )}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={cn('flex items-center gap-3', compact ? '' : 'px-2')}>
+      <div
+        className={cn(
+          'flex items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold',
+          compact ? 'h-8 w-8' : 'h-9 w-9',
+        )}
+      >
+        <Cpu className={cn(compact ? 'h-4 w-4' : 'h-5 w-5')} />
+      </div>
+      <div>
+        <div className={cn('font-semibold leading-tight', compact && 'text-sm')}>MinerWatch</div>
+        {!compact && (
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            Mining monitor
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Footer() {
+  return (
+    <div className="border-t border-border pt-4 text-[11px] text-muted-foreground">
+      <div className="font-mono">v0.2 · local</div>
+      <div className="mt-1">No cloud · AGPL-3.0</div>
+    </div>
+  );
+}
+
 export function AppShell() {
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const location = useLocation();
+
+  // Close the mobile drawer whenever the route changes — otherwise the
+  // user taps a link and the drawer stays open over the new page.
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
   return (
     <div className="flex min-h-screen bg-background text-foreground">
+      {/* Desktop sidebar — hidden on phones */}
       <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/50 px-4 py-6">
-        <div className="mb-8 flex items-center gap-3 px-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary text-primary-foreground font-bold">
-            <Cpu className="h-5 w-5" />
-          </div>
-          <div>
-            <div className="font-semibold leading-tight">MinerWatch</div>
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-              Mining monitor
-            </div>
-          </div>
+        <div className="mb-8">
+          <Brand />
         </div>
-
-        <nav className="flex-1 space-y-1">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              className={({ isActive }) =>
-                cn(
-                  'group flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors',
-                  isActive
-                    ? 'bg-primary/15 text-foreground'
-                    : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-                )
-              }
-            >
-              {({ isActive }) => (
-                <>
-                  <item.icon
-                    className={cn(
-                      'h-4 w-4 shrink-0',
-                      isActive ? 'text-primary' : 'text-muted-foreground group-hover:text-foreground',
-                    )}
-                  />
-                  <div className="flex flex-col leading-tight">
-                    <span className="font-medium">{item.label}</span>
-                    <span className="text-[11px] text-muted-foreground">{item.description}</span>
-                  </div>
-                </>
-              )}
-            </NavLink>
-          ))}
-        </nav>
-
-        <div className="border-t border-border pt-4 text-[11px] text-muted-foreground">
-          <div className="font-mono">v0.2 · local</div>
-          <div className="mt-1">No cloud · AGPL-3.0</div>
-        </div>
+        <NavList />
+        <Footer />
       </aside>
 
-      <main className="flex-1 min-w-0 px-4 py-6 md:px-8 md:py-8">
+      {/* Mobile top bar — only on phones. Fixed so it stays visible
+          while the user scrolls long pages like Settings. */}
+      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur md:hidden">
+        <Brand compact />
+        <button
+          type="button"
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open navigation menu"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-md text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+      </header>
+
+      {/* Mobile drawer (Radix Dialog used as a side sheet) */}
+      <DialogPrimitive.Root open={mobileOpen} onOpenChange={setMobileOpen}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay
+            className={cn(
+              'fixed inset-0 z-50 bg-black/70 backdrop-blur-sm md:hidden',
+              'data-[state=open]:animate-in data-[state=closed]:animate-out',
+              'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
+            )}
+          />
+          <DialogPrimitive.Content
+            className={cn(
+              'fixed inset-y-0 left-0 z-50 flex h-full w-72 max-w-[85vw] flex-col',
+              'border-r border-border bg-card px-4 py-6 shadow-xl md:hidden',
+              'data-[state=open]:animate-in data-[state=closed]:animate-out',
+              'data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
+              'duration-200',
+            )}
+          >
+            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+            <DialogPrimitive.Description className="sr-only">
+              MinerWatch main navigation menu
+            </DialogPrimitive.Description>
+
+            <div className="mb-6 flex items-center justify-between">
+              <Brand />
+              <DialogPrimitive.Close
+                aria-label="Close navigation menu"
+                className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <X className="h-4 w-4" />
+              </DialogPrimitive.Close>
+            </div>
+
+            <NavList onNavigate={() => setMobileOpen(false)} />
+            <Footer />
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
+
+      <main className="flex-1 min-w-0 px-4 pb-6 pt-20 md:px-8 md:py-8 md:pt-8">
         <Outlet />
       </main>
     </div>

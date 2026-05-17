@@ -115,13 +115,36 @@ def clear_login_failures(ip: str) -> None:
 
 
 def public_paths(path: str) -> bool:
-    """Paths that stay public even when auth is enabled (e.g. login, sw.js)."""
+    """Paths that stay public even when auth is enabled.
+
+    Two families belong here:
+
+      1. The pieces of the auth flow itself — ``/login`` (HTML page),
+         ``/api/auth/login`` (POST endpoint), ``/api/auth/status``
+         (used by the SPA to decide whether to redirect).
+
+      2. The static assets that make up the React frontend. These are
+         the JS/CSS bundles, the service worker, the favicons. They
+         are not "data" — they're the UI source code itself, identical
+         for every visitor. If we protect them, an unauthenticated user
+         hitting ``/login`` gets the HTML shell but every ``<script>``
+         the shell references comes back as 401, the bundle never
+         starts, and the result is a blank page on which the user can
+         never log in. That's exactly the "iPad blank screen, can't
+         even log in" symptom we hit before adding ``/assets/`` here.
+
+    The actual sensitive endpoints (``/api/miners``, ``/api/settings``,
+    ``/api/system/*`` and friends) stay protected because they don't
+    match any prefix below.
+    """
     public = (
         "/login",
         "/api/auth/login",
         "/api/auth/status",
         "/sw.js",
+        "/assets/",
         "/static/",
         "/favicon.ico",
+        "/favicon.svg",
     )
     return any(path == p or path.startswith(p) for p in public)

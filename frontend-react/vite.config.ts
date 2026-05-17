@@ -37,6 +37,11 @@ export default defineConfig({
     outDir: 'dist',
     emptyOutDir: true,
     sourcemap: false,
+    // Lower the JS syntax target to something that older iPads (Chrome
+    // iOS / Safari on iOS 13+) can actually run. Vite's default
+    // (`modules`) is Edge ≥88, Firefox ≥78, Chrome ≥87, Safari ≥14,
+    // which silently blanks the page on an iPad still on iPadOS 13.
+    target: ['es2019', 'safari13', 'ios13', 'chrome87', 'firefox78'],
     // Chunk strategy: react + react-dom in their own chunk so they get
     // cached across deploys when only app code changes.
     rollupOptions: {
