@@ -100,6 +100,7 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
                 <option value="bitaxe">Bitaxe / NerdQAxe</option>
                 <option value="canaan">Canaan / Avalon</option>
                 <option value="braiins">Braiins / BMM</option>
+                <option value="luxos">LuxOS (Antminer)</option>
               </select>
             </div>
             <div className="space-y-2">

@@ -21,7 +21,7 @@ from typing import Iterable
 
 from .config import get_config
 from . import db
-from .miners import BitaxeDriver, BraiinsDriver, CanaanDriver
+from .miners import BitaxeDriver, BraiinsDriver, CanaanDriver, LuxosDriver
 
 log = logging.getLogger("minerwatch.discovery")
 
@@ -89,8 +89,35 @@ async def _identify_bitaxe(host: str) -> dict | None:
 
 
 async def _identify_cgminer(host: str) -> dict | None:
-    """Tell Avalon Canaan from Braiins/BMM by probing a command."""
-    # Try Braiins first (BOSminer answers well-formed JSON)
+    """Tell LuxOS / Braiins / Canaan apart on port 4028.
+
+    All three speak a cgminer-compatible API, so the only way to know
+    which firmware we're talking to is to call ``version`` and inspect
+    the fingerprint. Order matters: we probe LuxOS first because its
+    fingerprint is the most distinctive (``LUXminer``); Braiins second
+    (``BOSminer``/``BOSminer+``); Canaan/Avalon last as the fallback
+    since its ``version`` reply doesn't carry a unique marker.
+    """
+    # Try LuxOS first — fingerprint is unmistakable (the firmware_version
+    # string starts with "LUXminer x.y.z-<git>"). The LuxosDriver is the
+    # most permissive parser, so a non-LuxOS miner that happens to
+    # answer here will just not match the marker below.
+    luxos = LuxosDriver(host=host, timeout=2)
+    sample = await luxos.poll()
+    if sample.online:
+        v = (sample.firmware_version or "").lower()
+        m = (sample.model or "").lower()
+        if "luxminer" in v or "luxos" in v or "luxor" in v or "lux" in m:
+            return {
+                "family": "luxos",
+                "host": host,
+                "port": PORT_CGMINER,
+                "mac": sample.mac,
+                "model": sample.model or "LuxOS",
+                "name": sample.model or f"LuxOS {host}",
+            }
+
+    # Try Braiins (BOSminer answers well-formed JSON)
     braiins = BraiinsDriver(host=host, timeout=2)
     sample = await braiins.poll()
     if sample.online:
@@ -107,7 +134,9 @@ async def _identify_cgminer(host: str) -> dict | None:
                 "name": sample.model or f"Braiins {host}",
             }
 
-    # Fallback: try Avalon
+    # Fallback: assume Avalon. Its `version` reply doesn't have a
+    # unique marker, so it's the catch-all for "cgminer-API on 4028
+    # that didn't identify as anything more specific".
     canaan = CanaanDriver(host=host, timeout=2)
     sample = await canaan.poll()
     if sample.online:
