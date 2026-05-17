@@ -14,11 +14,13 @@ import { useFleetHashrate } from '@/api/hooks';
 export function FleetHashrateChart() {
   const { data, isLoading } = useFleetHashrate(60, 60);
 
+  // Backend rows: { bucket_ts, total_ths }. We rename + convert to ms
+  // so Recharts can use the standard time-series shape internally.
   const series = useMemo(() => {
     const points = data?.points ?? [];
     return points.map((p) => ({
-      ts: p.ts * 1000,
-      ths: p.hashrate_ths,
+      ts: p.bucket_ts * 1000,
+      ths: p.total_ths,
     }));
   }, [data]);
 
