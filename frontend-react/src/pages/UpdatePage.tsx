@@ -29,22 +29,38 @@ import {
 import type { VersionResponse } from '@/lib/types';
 
 // Window during which we'll keep polling /api/version waiting for the
-// relaunched process to come back. If we don't hear from it in 90s we
-// assume the service-manager failed to restart the process and show
-// a recovery hint.
-const RESTART_TIMEOUT_MS = 90_000;
+// relaunched process to come back. The polling is now a "nice to
+// have" (it lets us show an earlier success message when /api/version
+// confirms the new build), but it is NOT what triggers the reload.
 const RESTART_POLL_INTERVAL_MS = 2_000;
+const RESTART_POLL_TIMEOUT_MS = 60_000;
 
-// How long to leave the success banner visible before forcing a
-// full-page reload. The reload is mandatory, not cosmetic: after the
-// in-place file swap, the running React app references Vite-hashed
-// JS/CSS chunks (index-XXXX.js, charts-YYYY.js, ...) that no longer
-// exist on disk — the new dist/ replaced them with differently-hashed
-// files. Any lazy chunk fetch or navigation that hits a stale asset
-// URL would 404. Reloading forces the browser to re-fetch
-// dist/index.html (which has Cache-Control: no-store) and pick up the
-// new hashed asset names.
-const POST_UPDATE_RELOAD_DELAY_MS = 3_000;
+// The reload is *guaranteed* by an unconditional setTimeout the
+// moment ``handleInstall`` returns from ``install.mutateAsync()``.
+// Two reasons it can't depend on the polling loop:
+//
+//   1. The polling depends on /api/version reaching us during the
+//      restart window, which can fail in subtle ways: a connection
+//      reset right after ``os._exit(1)`` resolves to a fetch error
+//      we can't always recover cleanly, and one stray exception in
+//      the chain leaves the user stuck on a stale page with the
+//      Install button still showing.
+//   2. The reload is *required* anyway — after the in-place file
+//      swap, the running React app references Vite-hashed JS/CSS
+//      chunks (index-XXXX.js, charts-YYYY.js, ...) that no longer
+//      exist on disk. So whatever happens to the polling loop, we
+//      must reload.
+//
+// 25s is a generous window: typical restarts complete in 10–15s,
+// the first boot after a release that bumped requirements.txt can
+// take ~20s while ``start.sh`` does ``pip install``. We bias toward
+// "user waits an extra few seconds" over "page reloads while the
+// backend is still down".
+const HARD_RELOAD_DELAY_MS = 25_000;
+// When the polling loop *does* confirm the new version before the
+// hard deadline, we accelerate the reload to give the user a snappier
+// experience. 1s is enough to flash the success banner.
+const POLLING_SUCCESS_RELOAD_MS = 1_500;
 
 type InstallPhase =
   | 'idle'
@@ -73,59 +89,69 @@ export function UpdatePage() {
   const [phase, setPhase] = useState<InstallPhase>('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const restartTimerRef = useRef<number | null>(null);
-  const expectedVersionRef = useRef<string | null>(null);
+  // Separate refs for the two timers so the polling loop can't
+  // accidentally clobber the hard-reload deadline (the original
+  // single-ref design was clobbering itself on each poll tick,
+  // which is part of why the reload never fired).
+  const hardReloadTimerRef = useRef<number | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
 
-  // Stop the restart-poll loop when the component unmounts (e.g. the
-  // user navigates away mid-install). Don't bail on the install
-  // itself — the backend has already exited.
+  // Stop both loops when the component unmounts (e.g. the user
+  // navigates away mid-install). The hard-reload timer keeps running
+  // even on unmount in spirit — it doesn't need React state, it'll
+  // just reload the whole window — so we only clear it if we want
+  // to abort it (e.g. on error).
   useEffect(() => {
     return () => {
-      if (restartTimerRef.current) {
-        window.clearTimeout(restartTimerRef.current);
+      if (pollTimerRef.current !== null) {
+        window.clearTimeout(pollTimerRef.current);
       }
+      // Note: we deliberately do NOT clear hardReloadTimerRef on
+      // unmount. If the user navigates to another route while an
+      // install is in flight, we still want the page to reload at
+      // the deadline so all components re-render with the new
+      // bundle.
     };
   }, []);
 
   async function pollForRestart(start: number, expected: string) {
-    if (Date.now() - start > RESTART_TIMEOUT_MS) {
-      setPhase('error');
-      setErrorMessage(
-        "The restart took longer than 90 seconds. Check that the MinerWatch service is running " +
-          '(`launchctl list | grep minerwatch` on macOS, `systemctl --user status minerwatch` on Linux). ' +
-          'Your previous version is still installed.',
-      );
+    if (Date.now() - start > RESTART_POLL_TIMEOUT_MS) {
+      // We've stopped trying to confirm via /api/version. The
+      // hard-reload timer is still armed and will fire shortly,
+      // so we just stop polling silently — no error to show.
       return;
     }
     try {
       const v = await api<VersionResponse>('/api/version');
       if (v.version === expected) {
         setPhase('success');
-        const seconds = Math.round(POST_UPDATE_RELOAD_DELAY_MS / 1000);
         setStatusMessage(
-          `MinerWatch is now running v${v.version}. Reloading the page in ${seconds}s to pick up the new assets…`,
+          `MinerWatch is now running v${v.version}. Reloading…`,
         );
-        // Best-effort refresh of the in-memory cached version too —
-        // the sidebar footer briefly updates before the reload kicks
-        // in, which feels smoother than seeing the old value flash.
-        await refetchVersion();
-        // The mandatory reload. See POST_UPDATE_RELOAD_DELAY_MS
-        // comment at the top of this file for why this isn't
-        // cosmetic.
-        restartTimerRef.current = window.setTimeout(() => {
+        // Polling confirmed the new build — accelerate the reload.
+        // Cancel the long fallback timer and schedule a short one.
+        if (hardReloadTimerRef.current !== null) {
+          window.clearTimeout(hardReloadTimerRef.current);
+        }
+        hardReloadTimerRef.current = window.setTimeout(() => {
           window.location.reload();
-        }, POST_UPDATE_RELOAD_DELAY_MS);
+        }, POLLING_SUCCESS_RELOAD_MS);
+        // Best-effort refresh of the cached version in React Query;
+        // wrapped in try/catch so a stray error here can't block
+        // the reload (this was a latent bug in the old code).
+        try {
+          await refetchVersion();
+        } catch {
+          /* ignore: the reload below will refresh everything anyway */
+        }
         return;
       }
-      // Service came back up but on the old version — could be a
-      // failed start.sh deps install. Keep polling for a bit; the
-      // timeout will trip eventually.
       setStatusMessage(`Service back up at v${v.version}, waiting for v${expected}…`);
     } catch {
-      // The expected case during restart: the process is down.
+      // The expected case during restart: the backend is down.
       setStatusMessage('Waiting for MinerWatch to come back up…');
     }
-    restartTimerRef.current = window.setTimeout(
+    pollTimerRef.current = window.setTimeout(
       () => pollForRestart(start, expected),
       RESTART_POLL_INTERVAL_MS,
     );
@@ -137,11 +163,23 @@ export function UpdatePage() {
     setStatusMessage('Downloading and verifying release…');
     try {
       const resp = await install.mutateAsync();
-      expectedVersionRef.current = resp.new_version;
       setPhase('restarting');
+      const hardSeconds = Math.round(HARD_RELOAD_DELAY_MS / 1000);
       setStatusMessage(
-        `Installed v${resp.new_version}. Restarting service — this usually takes 10–20 seconds.`,
+        `Installed v${resp.new_version}. MinerWatch is restarting — the page will reload automatically in ~${hardSeconds} seconds.`,
       );
+      // Hard guarantee: schedule the reload unconditionally the
+      // moment we have the install response. This timer fires even
+      // if the polling loop below never finds /api/version (network
+      // blip, slow boot, anything). The polling loop just gets to
+      // *accelerate* the reload if it confirms the new version
+      // earlier — see the success branch in pollForRestart.
+      if (hardReloadTimerRef.current !== null) {
+        window.clearTimeout(hardReloadTimerRef.current);
+      }
+      hardReloadTimerRef.current = window.setTimeout(() => {
+        window.location.reload();
+      }, HARD_RELOAD_DELAY_MS);
       pollForRestart(Date.now(), resp.new_version);
     } catch (err) {
       setPhase('error');
@@ -152,6 +190,12 @@ export function UpdatePage() {
             ? err.message
             : 'Install failed (unknown error).',
       );
+      // The install never started — abort the reload so the user
+      // can see the error message.
+      if (hardReloadTimerRef.current !== null) {
+        window.clearTimeout(hardReloadTimerRef.current);
+        hardReloadTimerRef.current = null;
+      }
     }
   }
 
