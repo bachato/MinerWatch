@@ -22,6 +22,7 @@ from typing import Iterable
 from .config import get_config
 from . import db
 from .miners import BitaxeDriver, BraiinsDriver, CanaanDriver, LuxosDriver
+from .miners.cgminer_client import CgminerClient, CgminerError
 
 log = logging.getLogger("minerwatch.discovery")
 
@@ -88,67 +89,115 @@ async def _identify_bitaxe(host: str) -> dict | None:
     }
 
 
-async def _identify_cgminer(host: str) -> dict | None:
-    """Tell LuxOS / Braiins / Canaan apart on port 4028.
+async def _cgminer_fingerprint(host: str, timeout: float = 2.0) -> str | None:
+    """Tell LuxOS / Braiins / Canaan apart on port 4028 by *raw key names*.
 
-    All three speak a cgminer-compatible API, so the only way to know
-    which firmware we're talking to is to call ``version`` and inspect
-    the fingerprint. Order matters: we probe LuxOS first because its
-    fingerprint is the most distinctive (``LUXminer``); Braiins second
-    (``BOSminer``/``BOSminer+``); Canaan/Avalon last as the fallback
-    since its ``version`` reply doesn't carry a unique marker.
+    The right discriminator is the **presence** of firmware-specific
+    keys in the ``version`` response, not the value of any parsed
+    field. Why this matters: every cgminer-compatible firmware fills
+    the same generic keys (``API``, ``Miner``, sometimes ``Type``),
+    so two drivers reading the same response can both come back with
+    a non-empty ``firmware_version`` and ``model``. The original
+    discovery checked the parsed strings for substrings like ``"lux"``,
+    which produced false positives whenever a driver's *fallback
+    default* (e.g. ``model = ... or "LuxOS"``) accidentally contained
+    the marker. We hit exactly this on a Braiins-OS miner being
+    classified as LuxOS because the LuxOS parser had defaulted model
+    to "LuxOS" before discovery checked.
+
+    Fingerprints, in priority order:
+      1. ``LUXminer`` (or any key matching ``lux`` case-insensitively)
+         → ``"luxos"``
+      2. ``BOSminer`` / ``BOSminer+`` (or any key matching ``bos`` or
+         ``braiins``) → ``"braiins"``
+      3. Neither → assume ``"canaan"`` (catch-all for cgminer-on-:4028
+         without a distinctive firmware marker). Avalon Nano 3s replies
+         to ``version`` with ``CGMiner``/``Miner`` only, so this is the
+         correct bucket for it too.
+
+    Returns ``None`` if the host doesn't answer the ``version`` call at
+    all (offline, wrong port, non-cgminer service).
     """
-    # Try LuxOS first — fingerprint is unmistakable (the firmware_version
-    # string starts with "LUXminer x.y.z-<git>"). The LuxosDriver is the
-    # most permissive parser, so a non-LuxOS miner that happens to
-    # answer here will just not match the marker below.
-    luxos = LuxosDriver(host=host, timeout=2)
-    sample = await luxos.poll()
-    if sample.online:
-        v = (sample.firmware_version or "").lower()
-        m = (sample.model or "").lower()
-        if "luxminer" in v or "luxos" in v or "luxor" in v or "lux" in m:
-            return {
-                "family": "luxos",
-                "host": host,
-                "port": PORT_CGMINER,
-                "mac": sample.mac,
-                "model": sample.model or "LuxOS",
-                "name": sample.model or f"LuxOS {host}",
-            }
+    cli = CgminerClient(host, PORT_CGMINER, timeout)
+    try:
+        version = await cli.call("version")
+    except (CgminerError, OSError, asyncio.TimeoutError):
+        return None
 
-    # Try Braiins (BOSminer answers well-formed JSON)
-    braiins = BraiinsDriver(host=host, timeout=2)
-    sample = await braiins.poll()
-    if sample.online:
-        # BOSminer answers `version` with BOSminer / BOSminer+ fields
-        v = (sample.firmware_version or "").lower()
-        m = (sample.model or "").lower()
-        if "bos" in v or "braiins" in v or "bmm" in m or "braiins" in m:
-            return {
-                "family": "braiins",
-                "host": host,
-                "port": PORT_CGMINER,
-                "mac": sample.mac,
-                "model": sample.model or "Braiins",
-                "name": sample.model or f"Braiins {host}",
-            }
+    # Normalize: VERSION may be a list-of-one (canonical) or a single
+    # dict (some legacy builds). Reduce to the inner dict.
+    v_block = version.get("VERSION")
+    if isinstance(v_block, list) and v_block:
+        v_dict = v_block[0] if isinstance(v_block[0], dict) else {}
+    elif isinstance(v_block, dict):
+        v_dict = v_block
+    else:
+        v_dict = {}
+    if not v_dict:
+        # cgminer answered but the shape is unrecognisable; still
+        # better to bucket it as "canaan/fallback" than to drop it.
+        return "canaan"
 
-    # Fallback: assume Avalon. Its `version` reply doesn't have a
-    # unique marker, so it's the catch-all for "cgminer-API on 4028
-    # that didn't identify as anything more specific".
-    canaan = CanaanDriver(host=host, timeout=2)
-    sample = await canaan.poll()
-    if sample.online:
+    keys_lower = {str(k).lower() for k in v_dict.keys()}
+    if any("lux" in k for k in keys_lower):
+        return "luxos"
+    if any("bos" in k or "braiins" in k for k in keys_lower):
+        return "braiins"
+    return "canaan"
+
+
+async def _identify_cgminer(host: str) -> dict | None:
+    """Identify a host that has port 4028 open.
+
+    Two-step: first a lightweight ``version`` call to fingerprint the
+    firmware family by raw key names (see ``_cgminer_fingerprint``),
+    then a full poll with the matching driver to harvest metadata
+    (MAC, hashboard model, hostname). This way the LuxOS / Braiins /
+    Canaan branches never see each other's responses.
+    """
+    family = await _cgminer_fingerprint(host)
+    if family is None:
+        return None
+
+    drv: LuxosDriver | BraiinsDriver | CanaanDriver
+    if family == "luxos":
+        drv = LuxosDriver(host=host, timeout=2)
+    elif family == "braiins":
+        drv = BraiinsDriver(host=host, timeout=2)
+    else:  # canaan / fallback
+        drv = CanaanDriver(host=host, timeout=2)
+
+    sample = await drv.poll()
+    if not sample.online:
+        # We fingerprinted successfully but the full poll bombed —
+        # unusual (probably a transient network blip). Still register
+        # the host so the user sees something rather than nothing,
+        # using the fingerprint family.
         return {
-            "family": "canaan",
+            "family": family,
             "host": host,
             "port": PORT_CGMINER,
-            "mac": sample.mac,
-            "model": sample.model or "Avalon",
-            "name": sample.model or f"Avalon {host}",
+            "mac": None,
+            "model": _default_model(family),
+            "name": f"{_default_model(family)} {host}",
         }
-    return None
+
+    return {
+        "family": family,
+        "host": host,
+        "port": PORT_CGMINER,
+        "mac": sample.mac,
+        "model": sample.model or _default_model(family),
+        "name": sample.model or f"{_default_model(family)} {host}",
+    }
+
+
+def _default_model(family: str) -> str:
+    return {
+        "luxos": "LuxOS",
+        "braiins": "Braiins",
+        "canaan": "Avalon",
+    }.get(family, family.title())
 
 
 async def scan_network(cidr: str | None = None) -> list[dict]:

@@ -203,12 +203,20 @@ class LuxosDriver(MinerDriver):
                 or v.get("Miner")
                 or v.get("API")
             )
+            # Do NOT default to a literal "LuxOS" here: discovery used to
+            # check for ``"lux" in model.lower()`` and the default value
+            # caused a false positive on Braiins-OS miners that lack
+            # ``Type``/``PROD``. Discovery now fingerprints by raw key
+            # names (see ``backend/discovery.py:_cgminer_fingerprint``)
+            # and applies the friendly "LuxOS" label there, so the
+            # driver can leave model unset when the firmware doesn't
+            # report one — safer for any future caller that might use
+            # this driver outside the discovery flow.
             sample.model = (
                 v.get("Type")
                 or v.get("PROD")
                 or v.get("MODEL")
                 or v.get("Model")
-                or "LuxOS"
             )
             mac = v.get("MAC")
             if isinstance(mac, str) and mac:
