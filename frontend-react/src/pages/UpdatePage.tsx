@@ -35,6 +35,17 @@ import type { VersionResponse } from '@/lib/types';
 const RESTART_TIMEOUT_MS = 90_000;
 const RESTART_POLL_INTERVAL_MS = 2_000;
 
+// How long to leave the success banner visible before forcing a
+// full-page reload. The reload is mandatory, not cosmetic: after the
+// in-place file swap, the running React app references Vite-hashed
+// JS/CSS chunks (index-XXXX.js, charts-YYYY.js, ...) that no longer
+// exist on disk — the new dist/ replaced them with differently-hashed
+// files. Any lazy chunk fetch or navigation that hits a stale asset
+// URL would 404. Reloading forces the browser to re-fetch
+// dist/index.html (which has Cache-Control: no-store) and pick up the
+// new hashed asset names.
+const POST_UPDATE_RELOAD_DELAY_MS = 3_000;
+
 type InstallPhase =
   | 'idle'
   | 'installing' // POST /api/update/install in flight
@@ -90,11 +101,20 @@ export function UpdatePage() {
       const v = await api<VersionResponse>('/api/version');
       if (v.version === expected) {
         setPhase('success');
-        setStatusMessage(`MinerWatch is now running v${v.version}.`);
-        // Refresh the cached version everywhere in the app (sidebar
-        // footer, etc.) so the new value propagates without a manual
-        // reload.
+        const seconds = Math.round(POST_UPDATE_RELOAD_DELAY_MS / 1000);
+        setStatusMessage(
+          `MinerWatch is now running v${v.version}. Reloading the page in ${seconds}s to pick up the new assets…`,
+        );
+        // Best-effort refresh of the in-memory cached version too —
+        // the sidebar footer briefly updates before the reload kicks
+        // in, which feels smoother than seeing the old value flash.
         await refetchVersion();
+        // The mandatory reload. See POST_UPDATE_RELOAD_DELAY_MS
+        // comment at the top of this file for why this isn't
+        // cosmetic.
+        restartTimerRef.current = window.setTimeout(() => {
+          window.location.reload();
+        }, POST_UPDATE_RELOAD_DELAY_MS);
         return;
       }
       // Service came back up but on the old version — could be a

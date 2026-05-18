@@ -45,7 +45,11 @@ class BraiinsDriver(MinerDriver):
             sample.firmware_version = (
                 v.get("BOSminer+") or v.get("BOSminer") or v.get("CGMiner") or v.get("API")
             )
-            sample.model = v.get("Type") or v.get("PROD") or "BMM/Braiins"
+            # No default: discovery applies the friendly "Braiins" label
+            # itself (see backend/discovery.py:_default_model). Leaving
+            # this None when the firmware doesn't report a model keeps
+            # the driver honest if used outside the discovery flow.
+            sample.model = v.get("Type") or v.get("PROD")
 
         # Summary
         try:
