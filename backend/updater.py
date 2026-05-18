@@ -488,6 +488,20 @@ async def install_update() -> Dict[str, Any]:
     _rsync_swap(src_root, ROOT_DIR)
     _log_to_file("File swap complete")
 
+    # 6b. Stamp the new dist/ with the installed version. The frontend
+    # auto-heal in start.sh keys off this file: if missing or
+    # mismatched it re-downloads the tarball at next boot. After a
+    # successful self-update the stamp is already correct (the swap
+    # brought in the new dist/), so we just write the version to
+    # avoid an avoidable round-trip to GitHub on the next launch.
+    try:
+        stamp = ROOT_DIR / "frontend-react" / "dist" / ".built-version"
+        if stamp.parent.exists():
+            stamp.write_text(f"{read_version()}\n", encoding="utf-8")
+            _log_to_file(f"Stamped {stamp.name} = {read_version()}")
+    except OSError as exc:
+        _log_to_file(f"Could not stamp .built-version: {exc}")
+
     # 7. Clean staging to keep disk tidy on the rig.
     shutil.rmtree(STAGING_DIR, ignore_errors=True)
 

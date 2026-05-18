@@ -16,6 +16,7 @@ miners on your home network — all from your browser, no cloud, no telemetry.
 
 ⚡ If MinerWatch is useful to your home rig, donations are welcome — BTC only:
 `bc1qexhamvrpclpr2skyyw3u8edm8kznnvt6zjudxu`
+(also reachable from inside the app via the sidebar → **Donate**)
 
 ![MinerWatch dashboard](docs/screenshots/dashboard.png)
 
@@ -108,6 +109,16 @@ comfortable opening a terminal but not necessarily developers.
   responsive down to phone-size viewports
 - **One-click macOS launcher**, Docker setup for Linux / Raspberry Pi, and
   an Umbrel App Store package (`umbrel/`) for one-click install on umbrelOS
+- **In-app self-update** — sidebar entry checks GitHub Releases, downloads
+  and SHA-256-verifies the matching tarball, swaps files preserving your
+  data, and restarts the service. One click from the dashboard, no SSH
+  needed (bare-metal installs only — Docker users update by rebuilding
+  the image, see the [Updates](#updates) section)
+- **Self-healing frontend bundle** — if `frontend-react/dist/` is missing
+  or out of sync with the installed version (typical after a `git pull`
+  or fresh clone), `start.sh` automatically fetches the prebuilt bundle
+  from the matching GitHub release on first launch. Node.js is **not
+  required** on the host
 - **No cloud, no account, no analytics** — all data stays on your box
 
 ## Supported miners
@@ -129,21 +140,20 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the driver template.
 ```bash
 git clone https://github.com/imlenti/MinerWatch.git
 cd MinerWatch
-
-# Build the React frontend once. Requires Node ≥ 18.
-# macOS:    brew install node
-# Raspbian: curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - \
-#           && sudo apt-get install -y nodejs
-cd frontend-react && npm install && npm run build && cd ..
-
 chmod +x start.sh
 ./start.sh
 ```
 
-`start.sh` creates a Python virtualenv in `.venv/`, installs deps,
-initialises the SQLite database in `data/`, and starts the FastAPI
-server with auto-reload. The React bundle you just built is served
-out of `frontend-react/dist/`.
+That's it. `start.sh`:
+
+1. Creates a Python virtualenv in `.venv/` and installs the backend deps.
+2. **Frontend auto-heal** — if `frontend-react/dist/` is missing or out of
+   sync with `VERSION`, it downloads the prebuilt bundle from the matching
+   GitHub release (~1.5 MB, no Node required). Falls back to a local
+   `npm install && npm run build` only if the download fails *and* Node is
+   available.
+3. Initialises the SQLite database in `data/`.
+4. Starts the FastAPI server.
 
 Then open:
 
@@ -152,9 +162,13 @@ Then open:
 
 Stop with `Ctrl+C`, or `./stop.sh` if it was launched in the background.
 
-> Prefer not to install Node? Use the Docker flow below — its
-> `frontend-builder` stage runs `npm install && npm run build` inside
-> the image, so the host only needs Docker.
+> **Want to build the frontend yourself?** (e.g. you're hacking on the
+> React side) Install Node ≥ 18 (`brew install node` on macOS, or
+> `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs`
+> on Raspbian), then run `cd frontend-react && npm install && npm run build`.
+> To skip the autoheal entirely (e.g. you're running `vite dev` in
+> parallel), set `MINERWATCH_SKIP_FRONTEND_AUTOHEAL=1` before launching
+> `start.sh`.
 
 ### macOS one-click (recommended for non-developers)
 
@@ -173,8 +187,15 @@ so MinerWatch installs the running copy under `~/Library/Application
 Support` (always accessible) and runs from there. After install, you can
 move or delete the source folder; the service keeps running.
 
-To update after editing the source: just double-click `installer.command`
-again — it re-syncs the runtime copy.
+To update to the latest published release, open the dashboard, click
+**Update** in the sidebar and hit *Install*. If a new release exists on
+GitHub, MinerWatch downloads + verifies + swaps + restarts itself in
+~20 s, preserving your `data/` and `config.yaml`. See the
+[Updates](#updates) section below for the full flow.
+
+To update after editing the source locally instead: double-click
+`installer.command` again — it re-syncs the runtime copy from the
+source folder.
 
 To stop the auto-start, double-click `uninstaller.command`. It will offer
 to wipe the runtime directory too (database + logs); answer `n` to keep
@@ -209,7 +230,8 @@ sudo loginctl enable-linger $USER
 A multi-stage `Dockerfile` and a `docker-compose.yml` are shipped for
 users who prefer containers. **It's an alternative, not a requirement**:
 on Linux (including Raspberry Pi) `start.sh` and `scripts/install-service.sh`
-work just as well, with less overhead.
+work just as well, with less overhead — and the in-app update flow
+works only on the bare-metal install, not under Docker (see below).
 
 ```bash
 docker compose up -d --build
@@ -229,11 +251,20 @@ What the stack does:
 - Adds a `HEALTHCHECK` on `/api/health` so `docker ps` reflects
   whether the API is actually serving.
 
-Update after a `git pull`:
+Update after a `git pull` (Docker mode does **not** support the in-app
+Update button — the container's `/app/` is reset from the immutable
+image on every restart, so any in-place file swap would be wiped out
+the next time Docker recreates the container):
 
 ```bash
+git pull origin main
 docker compose up -d --build
 ```
+
+If you want the in-app, one-click update flow, switch to the bare-metal
+install with `./scripts/install-service.sh` — your `data/` directory is
+already a bind-mount on the host, so the migration is just *stop the
+container, install the service pointing at the same folder*.
 
 Stop:
 
@@ -344,6 +375,49 @@ Highlights:
 - `auth.enabled`, `auth.password` — turn on password protection
 
 Full reference: [docs/configuration.md](docs/configuration.md).
+
+## Updates
+
+MinerWatch versions itself with a plain `VERSION` file in the repo root.
+Three places use it:
+
+- `GET /api/version` — the installed version.
+- `GET /api/update/check` — compares against the latest GitHub Release
+  (`github.com/imlenti/MinerWatch/releases/latest`) and tells the
+  frontend whether an update is available.
+- `POST /api/update/install` — downloads the release tarball, verifies
+  its SHA-256 against the `checksums.txt` published with the release,
+  swaps the new files into place (skipping `data/`, `.venv/`,
+  `config.yaml`, `data/vapid_keys.json`), and `os._exit(1)`s. The
+  service manager (launchd on macOS, systemd on Linux) relaunches the
+  process and `start.sh` picks up any new Python dependencies.
+
+In the dashboard, open the **Update** sidebar entry: it shows the
+installed version, the latest release on GitHub, a link to the
+release notes, and an *Install* button. A red dot on the sidebar
+entry signals that an update is available. The check is cached on
+disk for 6 hours (avoids hitting the anonymous GitHub rate limit of
+60 req/h) and can be forced with the *Check now* button.
+
+**What's preserved on an update**: the SQLite DB, VAPID keys, push
+subscriptions, your `config.yaml`, and the Python virtualenv. The
+update only ever overwrites code files.
+
+**What's required**: a bare-metal install with a service manager that
+restarts the process on exit (launchd's `KeepAlive` / systemd's
+`Restart=on-failure`). Both `installer.command` and
+`scripts/install-service.sh` set this up correctly. The in-app
+*Install* button is **not supported under Docker** — see the
+[Docker section](#docker--raspberry-pi-alternative-to-startsh)
+for the manual `docker compose pull` / rebuild flow.
+
+**Cutting a release** (if you fork or maintain MinerWatch): bump
+`VERSION` and `frontend-react/package.json`, tag with `vX.Y.Z` and
+push. The `.github/workflows/release.yml` workflow builds the
+frontend, packs `minerwatch-X.Y.Z.tar.gz` (including the prebuilt
+`dist/`), writes `checksums.txt`, and publishes a GitHub Release.
+Every installation on `vX.Y.(Z-1)` or older will see the new release
+within 30 minutes (or immediately via *Check now*).
 
 ## Notifications
 
@@ -529,6 +603,11 @@ Done:
 - [x] Top best shares leaderboard
 - [x] Per-miner Hardware tab with grouped readouts
 - [x] Umbrel App Store package
+- [x] In-app self-update flow (`Update` sidebar entry: GitHub Releases →
+      SHA-256 verify → swap → restart, preserves user data)
+- [x] Self-healing frontend bundle (`start.sh` downloads the prebuilt
+      `dist/` from the matching release when missing — no Node required)
+- [x] In-app Donate dialog (BTC address + client-side QR + copy)
 
 Next:
 
