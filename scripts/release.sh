@@ -168,15 +168,21 @@ git add VERSION frontend-react/package.json frontend-react/package-lock.json
 git commit -m "v$VERSION"
 
 # ---------- tag ----------
-info "Tagging $TAG…"
-git tag -a "$TAG" -m "MinerWatch $VERSION"
+# Note on the ${TAG}… braces: macOS ships bash 3.2 with a default
+# LC_CTYPE that treats multi-byte UTF-8 leading bytes (here the U+2026
+# ellipsis, 0xE2 0x80 0xA6) as identifier continuation, so bare
+# ``$TAG…`` is parsed as a variable named ``TAG\xE2…`` and bombs out
+# with "TAG?: unbound variable" under ``set -u``. Explicit braces
+# delimit the variable name unambiguously.
+info "Tagging ${TAG}…"
+git tag -a "${TAG}" -m "MinerWatch ${VERSION}"
 
 # ---------- push ----------
 info "Pushing main…"
 git push origin main
 
-info "Pushing tag $TAG (this triggers the Release workflow on GitHub)…"
-git push origin "$TAG"
+info "Pushing tag ${TAG} (this triggers the Release workflow on GitHub)…"
+git push origin "${TAG}"
 
 echo
 ok "Released $TAG."
