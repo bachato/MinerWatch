@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Check, Copy, Heart } from 'lucide-react';
+import { AlertTriangle, Check, Copy, Heart } from 'lucide-react';
 
 import {
   Dialog,
@@ -31,45 +31,129 @@ interface DonateDialogProps {
  * screen). Renders the QR client-side via qrcode.react — the address
  * never leaves the browser, no third-party API.
  */
-export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
-  const [copied, setCopied] = useState(false);
+type CopyStatus = 'idle' | 'copied' | 'selected' | 'failed';
 
-  // Reset the "Copied!" indicator whenever the dialog is reopened, so
-  // a stale "Copied" doesn't linger from a previous open.
+export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
+  const [copyStatus, setCopyStatus] = useState<CopyStatus>('idle');
+  // Ref to the <code> element that holds the address. Used as a fallback
+  // selection target when neither navigator.clipboard nor execCommand
+  // can put the bytes into the clipboard — at least we highlight the
+  // address so the user can do Cmd/Ctrl+C themselves.
+  const addressNodeRef = useRef<HTMLElement | null>(null);
+
+  // Reset the feedback whenever the dialog is reopened so a stale
+  // "Copied!" / "Press Cmd+C" doesn't linger from a previous open.
   useEffect(() => {
-    if (!open) setCopied(false);
+    if (!open) setCopyStatus('idle');
   }, [open]);
 
-  // Auto-clear the "Copied" label after 2s so the button reverts to its
-  // normal affordance.
+  // Auto-clear the feedback after 3s so the button reverts to its
+  // normal affordance. We pick 3s instead of 2s because the "selected
+  // — press Cmd+C" hint needs slightly more time to read than just
+  // "Copied".
   useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 2000);
+    if (copyStatus === 'idle') return;
+    const t = setTimeout(() => setCopyStatus('idle'), 3000);
     return () => clearTimeout(t);
-  }, [copied]);
+  }, [copyStatus]);
 
+  // ``copyStatus`` distinguishes three end-states so the UI can tell
+  // the truth: "copied" (clipboard genuinely got the value), "selected"
+  // (we couldn't write to the clipboard but the address is highlighted
+  // in the page, just press Cmd/Ctrl+C), and "failed" (we couldn't
+  // even select it, the user has to copy by hand).
   async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(BTC_ADDRESS);
-      setCopied(true);
-    } catch {
-      // navigator.clipboard can fail on insecure origins (http on a LAN
-      // IP that isn't localhost). Fall back to a textarea trick.
-      const ta = document.createElement('textarea');
-      ta.value = BTC_ADDRESS;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
+    // Strategy 1: modern Clipboard API. Only works in secure contexts —
+    // that's https:// or http://localhost. On a LAN like
+    // http://192.168.1.17:8000 the browser silently refuses, which is
+    // exactly the bug we hit before: the writeText() Promise rejects,
+    // we caught the rejection, fell back to execCommand, and the
+    // ``try { document.execCommand('copy'); setCopied(true); }`` block
+    // happily reported "Copied!" even when execCommand returned false.
+    if (
+      typeof navigator !== 'undefined' &&
+      navigator.clipboard?.writeText &&
+      window.isSecureContext
+    ) {
       try {
-        document.execCommand('copy');
-        setCopied(true);
+        await navigator.clipboard.writeText(BTC_ADDRESS);
+        setCopyStatus('copied');
+        return;
       } catch {
-        /* give up silently */
+        // fall through — even on isSecureContext, some browsers can
+        // refuse (e.g. permission policy)
       }
-      document.body.removeChild(ta);
     }
+
+    // Strategy 2: legacy execCommand('copy'). Required for HTTP-on-LAN.
+    // Must keep the textarea visible (not display:none, not
+    // visibility:hidden, not opacity:0) on iOS Safari and on some
+    // Chromium builds — those silently swallow execCommand if the
+    // selection isn't a real on-screen element. We make it 1px and
+    // off-screen but technically visible.
+    const ta = document.createElement('textarea');
+    ta.value = BTC_ADDRESS;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '0';
+    ta.style.left = '0';
+    ta.style.width = '1px';
+    ta.style.height = '1px';
+    ta.style.padding = '0';
+    ta.style.border = 'none';
+    ta.style.outline = 'none';
+    ta.style.boxShadow = 'none';
+    ta.style.background = 'transparent';
+    document.body.appendChild(ta);
+
+    // Save and restore the current selection so we don't trash whatever
+    // the user had highlighted before clicking Copy.
+    const previousSelection =
+      document.getSelection()?.rangeCount ? document.getSelection()?.getRangeAt(0) : null;
+
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, BTC_ADDRESS.length);
+
+    let succeeded = false;
+    try {
+      // execCommand returns a boolean — false means the browser
+      // refused. We MUST check the return value; the previous code
+      // ignored it.
+      succeeded = document.execCommand('copy');
+    } catch {
+      succeeded = false;
+    }
+
+    document.body.removeChild(ta);
+
+    // Restore the user's prior selection.
+    if (previousSelection) {
+      const sel = document.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(previousSelection);
+    }
+
+    if (succeeded) {
+      setCopyStatus('copied');
+      return;
+    }
+
+    // Strategy 3 (last resort): we couldn't get the bytes into the
+    // clipboard. Select the address node in the dialog so the user
+    // just presses Cmd/Ctrl+C themselves.
+    const node = addressNodeRef.current;
+    if (node) {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const sel = document.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      setCopyStatus('selected');
+      return;
+    }
+
+    setCopyStatus('failed');
   }
 
   return (
@@ -102,7 +186,10 @@ export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
             <label className="text-xs uppercase tracking-wider text-muted-foreground">
               Bitcoin address
             </label>
-            <code className="block break-all rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs">
+            <code
+              ref={addressNodeRef}
+              className="block break-all rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs"
+            >
               {BTC_ADDRESS}
             </code>
             <Button
@@ -112,10 +199,20 @@ export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
               className="w-full"
               onClick={handleCopy}
             >
-              {copied ? (
+              {copyStatus === 'copied' ? (
                 <>
                   <Check className="h-3.5 w-3.5" />
                   Copied
+                </>
+              ) : copyStatus === 'selected' ? (
+                <>
+                  <Check className="h-3.5 w-3.5" />
+                  Selected — press Cmd/Ctrl+C
+                </>
+              ) : copyStatus === 'failed' ? (
+                <>
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Copy failed — select manually
                 </>
               ) : (
                 <>
