@@ -89,12 +89,23 @@ export function UpdatePage() {
   const [phase, setPhase] = useState<InstallPhase>('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
-  // Separate refs for the two timers so the polling loop can't
+  // Live countdown shown in the "restarting" status message. Ticks
+  // down once per second from HARD_RELOAD_DELAY_MS down to 0, then
+  // the hard-reload timer fires the actual reload. ``null`` outside
+  // of an install: there's no countdown to show.
+  const [reloadCountdown, setReloadCountdown] = useState<number | null>(null);
+  // The version we just installed — used to build the live message
+  // alongside the countdown state. Kept separately from
+  // statusMessage so the message body can interpolate the current
+  // tick of the timer without re-`setStatusMessage` every second.
+  const [installedVersion, setInstalledVersion] = useState<string | null>(null);
+  // Separate refs for the timers so the polling loop can't
   // accidentally clobber the hard-reload deadline (the original
   // single-ref design was clobbering itself on each poll tick,
   // which is part of why the reload never fired).
   const hardReloadTimerRef = useRef<number | null>(null);
   const pollTimerRef = useRef<number | null>(null);
+  const countdownIntervalRef = useRef<number | null>(null);
 
   // Stop both loops when the component unmounts (e.g. the user
   // navigates away mid-install). The hard-reload timer keeps running
@@ -105,6 +116,9 @@ export function UpdatePage() {
     return () => {
       if (pollTimerRef.current !== null) {
         window.clearTimeout(pollTimerRef.current);
+      }
+      if (countdownIntervalRef.current !== null) {
+        window.clearInterval(countdownIntervalRef.current);
       }
       // Note: we deliberately do NOT clear hardReloadTimerRef on
       // unmount. If the user navigates to another route while an
@@ -128,6 +142,14 @@ export function UpdatePage() {
         setStatusMessage(
           `MinerWatch is now running v${v.version}. Reloading…`,
         );
+        // The big countdown is over — kill the tick so the
+        // "in Ns…" text doesn't keep flashing under the success
+        // banner.
+        if (countdownIntervalRef.current !== null) {
+          window.clearInterval(countdownIntervalRef.current);
+          countdownIntervalRef.current = null;
+        }
+        setReloadCountdown(null);
         // Polling confirmed the new build — accelerate the reload.
         // Cancel the long fallback timer and schedule a short one.
         if (hardReloadTimerRef.current !== null) {
@@ -149,7 +171,12 @@ export function UpdatePage() {
       setStatusMessage(`Service back up at v${v.version}, waiting for v${expected}…`);
     } catch {
       // The expected case during restart: the backend is down.
-      setStatusMessage('Waiting for MinerWatch to come back up…');
+      // Don't overwrite the countdown message — the live counter is
+      // the better feedback. Only set a status message if the
+      // countdown isn't running.
+      if (countdownIntervalRef.current === null) {
+        setStatusMessage('Waiting for MinerWatch to come back up…');
+      }
     }
     pollTimerRef.current = window.setTimeout(
       () => pollForRestart(start, expected),
@@ -164,10 +191,33 @@ export function UpdatePage() {
     try {
       const resp = await install.mutateAsync();
       setPhase('restarting');
-      const hardSeconds = Math.round(HARD_RELOAD_DELAY_MS / 1000);
-      setStatusMessage(
-        `Installed v${resp.new_version}. MinerWatch is restarting — the page will reload automatically in ~${hardSeconds} seconds.`,
-      );
+      setInstalledVersion(resp.new_version);
+      // statusMessage is left empty during 'restarting': the message
+      // body is now built dynamically from installedVersion +
+      // reloadCountdown so the seconds tick visibly. See the
+      // AvailableBody render branch.
+      setStatusMessage('');
+      // Start the live countdown. Initial value mirrors the hard
+      // reload deadline; ticks down once per second; lands on 0 right
+      // before the reload fires.
+      const totalSeconds = Math.round(HARD_RELOAD_DELAY_MS / 1000);
+      setReloadCountdown(totalSeconds);
+      if (countdownIntervalRef.current !== null) {
+        window.clearInterval(countdownIntervalRef.current);
+      }
+      countdownIntervalRef.current = window.setInterval(() => {
+        setReloadCountdown((prev) => {
+          if (prev === null) return null;
+          if (prev <= 1) {
+            // Reached zero — let the hard-reload timer fire. Don't
+            // try to clear the interval here (we're inside the
+            // updater); the unmount cleanup or the success branch
+            // will handle it.
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
       // Hard guarantee: schedule the reload unconditionally the
       // moment we have the install response. This timer fires even
       // if the polling loop below never finds /api/version (network
@@ -190,12 +240,18 @@ export function UpdatePage() {
             ? err.message
             : 'Install failed (unknown error).',
       );
-      // The install never started — abort the reload so the user
-      // can see the error message.
+      // The install never started — abort the reload + countdown so
+      // the user can see the error message.
       if (hardReloadTimerRef.current !== null) {
         window.clearTimeout(hardReloadTimerRef.current);
         hardReloadTimerRef.current = null;
       }
+      if (countdownIntervalRef.current !== null) {
+        window.clearInterval(countdownIntervalRef.current);
+        countdownIntervalRef.current = null;
+      }
+      setReloadCountdown(null);
+      setInstalledVersion(null);
     }
   }
 
@@ -283,6 +339,8 @@ export function UpdatePage() {
               installing={installing}
               statusMessage={statusMessage}
               errorMessage={errorMessage}
+              installedVersion={installedVersion}
+              reloadCountdown={reloadCountdown}
               onInstall={handleInstall}
             />
           ) : (
@@ -366,6 +424,8 @@ interface AvailableBodyProps {
   installing: boolean;
   statusMessage: string;
   errorMessage: string;
+  installedVersion: string | null;
+  reloadCountdown: number | null;
   onInstall: () => void;
 }
 
@@ -375,8 +435,23 @@ function AvailableBody({
   installing,
   statusMessage,
   errorMessage,
+  installedVersion,
+  reloadCountdown,
   onInstall,
 }: AvailableBodyProps) {
+  // Build the body of the status banner, with the special-cased live
+  // countdown during the 'restarting' phase. The countdown ticks once
+  // per second (driven by the setInterval armed in handleInstall),
+  // and this expression re-evaluates on every state update so the
+  // displayed number is always fresh.
+  const displayMessage = (() => {
+    if (errorMessage) return errorMessage;
+    if (phase === 'restarting' && installedVersion !== null && reloadCountdown !== null) {
+      const noun = reloadCountdown === 1 ? 'second' : 'seconds';
+      return `Installed v${installedVersion}. MinerWatch is restarting — page reloads in ${reloadCountdown} ${noun}…`;
+    }
+    return statusMessage;
+  })();
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline gap-2">
@@ -434,7 +509,7 @@ function AvailableBody({
         )}
       </div>
 
-      {(statusMessage || phase === 'success' || errorMessage) && (
+      {(statusMessage || phase === 'success' || phase === 'restarting' || errorMessage) && (
         <div
           className={
             phase === 'success'
@@ -451,7 +526,7 @@ function AvailableBody({
           ) : (
             <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
           )}
-          <span>{errorMessage || statusMessage}</span>
+          <span>{displayMessage}</span>
         </div>
       )}
     </div>
