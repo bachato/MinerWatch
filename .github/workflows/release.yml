@@ -70,6 +70,15 @@ jobs:
         working-directory: frontend-react
         run: npm run build
 
+      - name: Stamp dist with built version
+        # The frontend auto-heal in start.sh compares this file against
+        # VERSION on every boot. CI writes it here so that the tarball
+        # we ship already has the stamp set — no extra round-trip on
+        # the user's machine.
+        run: |
+          echo "${{ steps.ver.outputs.version }}" > frontend-react/dist/.built-version
+          cat frontend-react/dist/.built-version
+
       - name: Pack release tarball
         run: |
           set -euo pipefail
