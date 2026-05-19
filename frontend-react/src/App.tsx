@@ -4,6 +4,7 @@ import { AppShell } from '@/components/AppShell';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
 import { MinerPage } from '@/pages/MinerPage';
+import { PoolsPage } from '@/pages/PoolsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SystemPage } from '@/pages/SystemPage';
 import { UpdatePage } from '@/pages/UpdatePage';
@@ -28,6 +29,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/pools" element={<PoolsPage />} />
         <Route path="/miner/:id" element={<MinerPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/system" element={<SystemPage />} />

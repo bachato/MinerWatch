@@ -95,6 +95,21 @@ export interface BoardSnapshot {
   chips: ChipHealthRecord[];
 }
 
+// One pool slot configured on a miner — populated by every driver
+// since v0.x; see backend/miners/base.py:PoolSnapshot.
+export interface LivePool {
+  url: string | null;
+  user: string | null;
+  status: string | null;
+  priority: number | null;
+  accepted: number | null;
+  rejected: number | null;
+  stale: number | null;
+  last_share_ts: number | null;
+  active: boolean | null;
+  slot: 'primary' | 'fallback' | string | null;
+}
+
 // One physical fan. Today only LuxOS populates this; for other
 // families the array stays empty and the frontend falls back to the
 // legacy single-fan / fan_2 rendering.
@@ -166,6 +181,9 @@ export interface LiveSample {
   pool_url_fallback: string | null;
   worker_fallback: string | null;
   pool_active: 'primary' | 'fallback' | string | null;
+  // Structured per-pool list — one entry per pool slot configured on
+  // the miner, including fallback(s). All drivers now populate this.
+  pools: LivePool[];
   raw: Record<string, unknown> | null;
 }
 
@@ -177,6 +195,48 @@ export interface MinerListEntry extends MinerRecord {
 
 export interface MinerListResponse {
   miners: MinerListEntry[];
+}
+
+// One row from /api/pools — a single (miner, pool slot) pair.
+//
+// Field availability varies by driver (see backend/miners/base.py:
+// :class:`PoolSnapshot`). In short:
+//   * cgminer-family (Braiins/LuxOS/Canaan): every field can be
+//     populated; ``status`` is an explicit Alive/Dead/Disabled from
+//     the firmware.
+//   * Bitaxe: ``stale`` and ``last_share_ts`` are always null because
+//     AxeOS doesn't surface them; ``status`` is null (we don't fake
+//     Alive/Dead per-pool — the miner's overall ``live_online`` flag
+//     is the right signal there).
+//   * NerdOctaxe: same as Bitaxe but two rows when a fallback pool is
+//     configured; the firmware reports ``accepted`` / ``rejected``
+//     globally rather than per-slot, so they only appear on the
+//     ``active`` slot and are null on the inactive one.
+export interface PoolRow {
+  miner_id: number;
+  miner_name: string;
+  miner_host: string;
+  family: MinerFamily;
+  live_online: boolean | null;
+  live_error: string | null;
+  url: string | null;
+  user: string | null;
+  // "alive" | "dead" | "disabled" | null — null means "unknown",
+  // typical for AxeOS where the firmware has no per-pool flag.
+  status: string | null;
+  priority: number | null;
+  accepted: number | null;
+  rejected: number | null;
+  stale: number | null;
+  last_share_ts: number | null;
+  active: boolean | null;
+  // "primary" | "fallback" | null — only filled for the AxeOS family;
+  // cgminer firmwares use ``priority`` instead.
+  slot: 'primary' | 'fallback' | string | null;
+}
+
+export interface PoolsResponse {
+  pools: PoolRow[];
 }
 
 export interface Capabilities {

@@ -8,6 +8,7 @@ import {
   Download,
   Heart,
   Menu,
+  Network,
   Server,
   Settings as SettingsIcon,
   X,
@@ -79,6 +80,13 @@ function NavList({ onNavigate, onDonateClick, updateAvailable }: NavListProps) {
       label: 'Analytics',
       icon: BarChart3,
       description: 'Predictions & records',
+    },
+    {
+      kind: 'link',
+      to: '/pools',
+      label: 'Pools',
+      icon: Network,
+      description: 'Stratum endpoints & shares',
     },
     {
       kind: 'link',

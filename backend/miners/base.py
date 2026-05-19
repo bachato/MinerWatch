@@ -89,6 +89,43 @@ class FanSnapshot:
 
 
 @dataclass
+class PoolSnapshot:
+    """Per-pool snapshot — one entry per pool slot configured on a miner.
+
+    Mirrors what the cgminer-family ``pools`` command returns 1:1 where
+    possible, and is synthesised from firmware fields on AxeOS (Bitaxe /
+    NerdOctaxe). The frontend reads ``MinerSample.pools`` to render the
+    fleet-wide Pools page.
+
+    Field availability by driver:
+
+      * cgminer-family (Braiins/LuxOS/Canaan): url, user, status,
+        priority, accepted, rejected, **stale**, last_share_ts, active.
+        Some builds also expose ``Diff1 Shares`` and per-pool reject %.
+      * Bitaxe: url, user, accepted, rejected. ``status`` is inferred
+        from miner liveness (no explicit Alive/Dead per-pool flag in
+        AxeOS). ``stale`` is not exposed by the firmware — stays None.
+      * NerdOctaxe: same as Bitaxe, with a second entry for the
+        fallback slot. ``active`` is True for whichever the firmware
+        reports via ``stratum.activePoolMode`` / ``usingFallback``.
+
+    ``status`` values: ``"alive"`` / ``"dead"`` / ``"disabled"`` /
+    ``None`` (unknown — left to the frontend to interpret).
+    """
+
+    url: str | None = None
+    user: str | None = None
+    status: str | None = None         # "alive" | "dead" | "disabled" | None
+    priority: int | None = None       # cgminer "Priority"; lower = preferred
+    accepted: int | None = None
+    rejected: int | None = None
+    stale: int | None = None          # not surfaced by AxeOS firmware
+    last_share_ts: int | None = None  # epoch seconds; cgminer "Last Share Time"
+    active: bool | None = None        # this is the slot the miner is mining on
+    slot: str | None = None           # "primary" / "fallback" hint for AxeOS
+
+
+@dataclass
 class MinerSample:
     """Snapshot of a miner's current metrics.
 
@@ -195,6 +232,17 @@ class MinerSample:
     worker_fallback: str | None = None
     pool_active: str | None = None
 
+    # Structured per-pool list — one entry per pool slot configured on
+    # the miner, including the fallback slot(s). This is what feeds the
+    # fleet-wide /pools page. The legacy ``pool_url`` / ``worker`` /
+    # ``pool_url_fallback`` / ``worker_fallback`` / ``pool_active``
+    # scalars above stay populated for backward compatibility (the
+    # dashboard cards, the DB, and the alerts pipeline all still read
+    # them). ``pools`` is additive: drivers that haven't been migrated
+    # yet leave it empty and the frontend falls back to synthesising a
+    # single entry from the legacy fields.
+    pools: list[PoolSnapshot] = field(default_factory=list)
+
     # Original payload for debugging / for extracting non-standard fields
     raw: dict[str, Any] | None = None
 
@@ -271,6 +319,90 @@ def parse_si_difficulty(value: Any) -> float | None:
         return float(num_part) * mult
     except (TypeError, ValueError):
         return None
+
+
+def _opt_int_basic(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(value))
+        except (TypeError, ValueError):
+            return None
+
+
+def parse_cgminer_pool_entry(entry: dict[str, Any]) -> PoolSnapshot:
+    """Convert one row from the cgminer ``pools`` reply into a :class:`PoolSnapshot`.
+
+    Field names are stable across cgminer/BOSminer/LuxOS/Avalon but
+    *casing and presence* differ between builds. We accept the common
+    aliases and tolerate missing keys (any unknown field becomes None).
+
+    A few subtleties handled here:
+
+      * ``Status`` arrives as ``"Alive"`` / ``"Dead"`` / ``"Disabled"``;
+        we normalise to lowercase for the wire to keep the frontend
+        comparison case-insensitive.
+      * ``Stratum Active`` and ``connected`` are different ways
+        different firmwares mark "this is the pool currently mining".
+        We surface both via ``active``.
+      * ``Last Share Time`` is epoch seconds on cgminer and some builds
+        return ``"0"`` to mean "never" — preserve that semantic by
+        leaving ``last_share_ts=None`` for zero.
+    """
+    if not isinstance(entry, dict):
+        return PoolSnapshot()
+
+    url = entry.get("Stratum URL") or entry.get("URL") or entry.get("url")
+    user = entry.get("User") or entry.get("user")
+    priority = _opt_int_basic(entry.get("Priority"))
+
+    status_raw = entry.get("Status")
+    status: str | None = None
+    if isinstance(status_raw, str) and status_raw.strip():
+        status = status_raw.strip().lower()
+
+    accepted = _opt_int_basic(entry.get("Accepted"))
+    rejected = _opt_int_basic(entry.get("Rejected"))
+    # cgminer/BOSminer field for stale-rejected shares. Some Avalon
+    # builds spell it "Stale" with title-case; LuxOS keeps the same.
+    stale = _opt_int_basic(entry.get("Stale"))
+
+    # Last Share Time is the epoch second of the last accepted share
+    # for *this pool slot*. Cgminer emits 0 when there hasn't been one
+    # yet; treat that as "no data" so the UI shows "—" not "Dec 1969".
+    last_share = _opt_int_basic(
+        entry.get("Last Share Time")
+        or entry.get("LastShareTime")
+    )
+    if last_share == 0:
+        last_share = None
+
+    # "This pool is currently mining". Two firmware signals:
+    #   * "Stratum Active" → string "true"/"false" (cgminer / LuxOS / Avalon)
+    #   * "connected"       → bool (some BOS+ builds and AxeOS dual-pool)
+    active: bool | None = None
+    sa = entry.get("Stratum Active")
+    if isinstance(sa, bool):
+        active = sa
+    elif isinstance(sa, str) and sa.strip():
+        active = sa.strip().lower() == "true"
+    elif isinstance(entry.get("connected"), bool):
+        active = entry["connected"]
+
+    return PoolSnapshot(
+        url=url if isinstance(url, str) and url else None,
+        user=user if isinstance(user, str) and user else None,
+        status=status,
+        priority=priority,
+        accepted=accepted,
+        rejected=rejected,
+        stale=stale,
+        last_share_ts=last_share,
+        active=active,
+    )
 
 
 class MinerDriver:
