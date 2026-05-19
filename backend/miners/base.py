@@ -13,6 +13,82 @@ from typing import Any
 
 
 @dataclass
+class BoardSnapshot:
+    """Per-hashboard snapshot.
+
+    Populated by drivers (currently only LuxOS) that can report the
+    state of each hashboard separately. Multi-board firmwares like
+    Antminer/Whatsminer expose freq, voltage, temperatures and chip
+    health on a per-board basis; aggregating those into a single
+    miner-level reading loses the per-board topology that operators
+    rely on to spot a faulty board.
+
+    All fields are optional. Each driver fills what it can read; the
+    frontend renders a tile per board and skips the rows that are
+    None. Temperatures are kept under ``temps_extra`` rather than
+    spelled out one field per sensor because LuxOS surfaces them by
+    *position* (BottomLeft/BottomRight/TopLeft/TopRight) with the
+    human-readable label living in a sibling ``METADATA`` block —
+    keeping the original key + the label preserves both pieces of
+    information for the frontend.
+    """
+
+    id: int
+    status: str | None = None              # e.g. "Alive" / "Dead"
+    enabled: bool | None = None            # cgminer "Enabled" field
+    connector: str | None = None           # physical board connector (e.g. "J6")
+
+    # Performance
+    frequency_mhz: float | None = None
+    voltage_v: float | None = None         # board input voltage (not core mV)
+    hashrate_ths: float | None = None      # rolling avg (typically MHS 1m / 1e6)
+    hashrate_5s_ths: float | None = None
+    nominal_ths: float | None = None       # expected/nominal hashrate per board
+
+    # Thermal — chip is the worst case across chips, others are per-sensor.
+    # ``temps_extra`` carries every named sensor LuxOS exposes, keyed by
+    # its raw position name (BottomLeft, …). ``temps_labels`` mirrors
+    # METADATA so the frontend can display "Board Outlet (top)" etc.
+    temp_chip_c: float | None = None
+    temps_extra: dict[str, float] = field(default_factory=dict)
+    temps_labels: dict[str, str] = field(default_factory=dict)
+
+    # Chip health (from LuxOS healthchipget)
+    chips_total: int | None = None
+    chips_healthy: int | None = None
+    chips_unhealthy: int | None = None
+    chips_unknown: int | None = None
+    # Per-chip records, in board-iteration order. Schema mirrors LuxOS:
+    #   {"chip": int, "row": int, "column": int, "domain": int,
+    #    "healthy": "Y"|"N"|"Unknown", "frequency": float|None,
+    #    "ghs_1m": float|None, "ghs_5m": float|None,
+    #    "score": float|None, "chip_temp_c": float|None,
+    #    "hash_count": int|None, "hash_expected": int|None,
+    #    "is_checking": bool|None}
+    # Kept as plain dicts (not a nested dataclass) because the schema
+    # is shaped by what the firmware returns; making it a class adds
+    # noise without making it more correct.
+    chips: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class FanSnapshot:
+    """Per-fan snapshot.
+
+    Drivers that talk to multi-fan firmware (LuxOS, BOSminer) populate
+    one of these per physical fan. The legacy ``fan_rpm`` / ``fan_pct``
+    / ``fans_extra`` fields on :class:`MinerSample` are kept for
+    backward compatibility with the time-series DB and with other
+    drivers that report a single fan.
+    """
+
+    id: int
+    rpm: int | None = None
+    speed_pct: float | None = None
+    connector: str | None = None  # e.g. "J12 | J14" — LuxOS only
+
+
+@dataclass
 class MinerSample:
     """Snapshot of a miner's current metrics.
 
@@ -46,6 +122,14 @@ class MinerSample:
     fan_rpm: int | None = None
     fan_pct: float | None = None
     fans_extra: dict[str, int] = field(default_factory=dict)
+    # Structured per-fan list — populated by drivers that have richer
+    # per-fan metadata than the plain {id: rpm} map in ``fans_extra``.
+    # Today only LuxOS fills this (RPM + Speed% + physical connector
+    # label like "J12 | J14"). The legacy ``fan_rpm`` / ``fan_pct`` /
+    # ``fans_extra`` fields are still populated for time-series logging
+    # and for drivers that only know one fan; ``fans`` is additive and
+    # only consumed by the frontend's N-ary fan renderer.
+    fans: list[FanSnapshot] = field(default_factory=list)
     # NerdOctaxe has a second physical fan (the firmware exposes
     # `fanrpm2`/`fanspeed2`). The Bitaxe-family base only carried a
     # single fan; rather than abusing `fans_extra` we expose dedicated
@@ -59,6 +143,17 @@ class MinerSample:
     frequency_mhz: float | None = None
     voltage_mv: float | None = None
     asic_count: int | None = None
+    # Multi-hashboard miners (S19/S21 + LuxOS, BMM, …) report one
+    # entry per physical board. ``board_count`` is the length of that
+    # list, ``chip_count`` is the total ASIC chip count across all
+    # boards. ``asic_count`` historically conflated the two: drivers
+    # were storing the *board* count there because cgminer's ``devs``
+    # returns one row per board. We keep ``asic_count`` populated for
+    # backward compatibility (older callers expect it) but new code
+    # should prefer ``board_count`` / ``chip_count``.
+    board_count: int | None = None
+    chip_count: int | None = None
+    boards: list[BoardSnapshot] = field(default_factory=list)
 
     # PSU draw in Amps. Bitaxe doesn't surface this directly, but
     # NerdOctaxe firmware does (`currentA` in /api/system/info).

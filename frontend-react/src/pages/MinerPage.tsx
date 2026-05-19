@@ -9,6 +9,7 @@ import { MinerHeader } from '@/components/miner/MinerHeader';
 import { MinerBestShares } from '@/components/miner/MinerBestShares';
 import { LiveStats } from '@/components/miner/LiveStats';
 import { HardwareCards } from '@/components/miner/HardwareCards';
+import { Hashboards } from '@/components/miner/Hashboards';
 import { HistoryCharts } from '@/components/miner/HistoryCharts';
 import { FanControls } from '@/components/miner/FanControls';
 import { useMiner } from '@/api/hooks';
@@ -102,12 +103,18 @@ export function MinerPage() {
           <TabsTrigger value="controls">Controls</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="mt-0">
+        <TabsContent value="overview" className="mt-0 space-y-4">
           <LiveStats data={data} />
+          {/* Multi-board miners (currently only LuxOS) get the LuxOS-style
+              per-hashboard grid right under the overview — this is where
+              users coming from the LuxOS dashboard expect to see it.
+              The component self-hides on single-board miners. */}
+          <Hashboards data={data} />
         </TabsContent>
 
-        <TabsContent value="hardware" className="mt-0">
+        <TabsContent value="hardware" className="mt-0 space-y-4">
           <HardwareCards data={data} />
+          <Hashboards data={data} />
         </TabsContent>
 
         <TabsContent value="history" className="mt-0">

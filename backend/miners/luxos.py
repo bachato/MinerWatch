@@ -145,10 +145,28 @@ temp is 78°C" and understand why hashrate is lower than expected.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
-from .base import MinerDriver, MinerSample, parse_si_difficulty as _parse_si_difficulty
+from .base import (
+    BoardSnapshot,
+    FanSnapshot,
+    MinerDriver,
+    MinerSample,
+    parse_si_difficulty as _parse_si_difficulty,
+)
 from .cgminer_client import CgminerClient, CgminerError
+
+
+# Cap parallelism of per-board reads. The LuxOS API server is a small
+# cgminer-style fork that historically degrades when more than ~10
+# concurrent connections are open. We issue 3 new commands per board
+# (frequencyget, voltageget, healthchipget) — for a 3-board S19 that's
+# 9 sockets if we fire them all at once, plus whatever the existing
+# sequential reads are doing. A semaphore at 4 keeps us comfortably
+# under the threshold while still cutting wall-clock time by ~3x vs.
+# pure-serial execution.
+_PER_BOARD_PARALLELISM = 4
 
 
 class LuxosDriver(MinerDriver):
@@ -296,31 +314,45 @@ class LuxosDriver(MinerDriver):
                 sample.frequency_mhz = round(sum(freqs) / len(freqs), 1)
             sample.asic_count = len(d_list)
 
-        # --- Temps extension: per-board chip + board (PCB) temps ---
-        # Same shape as Braiins: {"TEMPS":[{"ID":0,"Chip":62.0,"Board":58.0}, ...]}
-        # When present, this is more accurate than the `devs` value.
+        # --- Temps extension: per-board sensors ---
+        # The earlier shape comment ("Chip"/"Board"/"PCB") was wrong for
+        # LuxOS. The actual payload exposes 4 sensors per board, named
+        # by physical *position* (BottomLeft/BottomRight/TopLeft/
+        # TopRight) plus a sibling METADATA section that maps each
+        # position to a human label ("Board Outlet", "Board Inlet",
+        # "Water Inlet", "Water Outlet"). On the S19j Pro KuroPro the
+        # labels are typically "Board Exhaust" / "Board Intake" (top
+        # and bottom). Real example:
+        #   {
+        #     "METADATA":[{"BottomLeft":{"Label":"Board Outlet",...},...}],
+        #     "TEMPS":[{"ID":0,"TEMP":1,"BottomLeft":58,"BottomRight":42,
+        #              "TopLeft":56,"TopRight":48}, ...]
+        #   }
+        # The old code looked for "Chip"/"Board" keys that don't exist
+        # in LuxOS and silently fell back to `devs.Temperature` for the
+        # max chip temp. We now correctly aggregate across all 4 sensors
+        # per board and keep the per-board breakdown for the BoardSnapshot
+        # builder further down (see `_temps_for_board`).
         try:
             temps = await cli.call("temps")
         except CgminerError:
             temps = {}
         t_list = _arr(temps, "TEMPS")
         if t_list:
-            chip_vals: list[float] = []
-            board_vals: list[float] = []
+            all_temp_vals: list[float] = []
             for t in t_list:
-                c = _opt_float(t.get("Chip"))
-                if c is not None and c > 0:
-                    chip_vals.append(c)
-                b = _opt_float(t.get("Board") or t.get("PCB"))
-                if b is not None and b > 0:
-                    board_vals.append(b)
-            if chip_vals:
-                sample.temp_chip_c = round(max(chip_vals), 1)
-            if board_vals:
-                # The board/PCB sensor is the closest analogue to a VR
-                # temperature on Antminer hardware — map it to temp_vr_c
-                # for consistency with how Braiins reports it.
-                sample.temp_vr_c = round(max(board_vals), 1)
+                for pos in _TEMP_POSITIONS:
+                    v = _opt_float(t.get(pos))
+                    if v is not None and v > 0:
+                        all_temp_vals.append(v)
+                # Also accept the legacy/Braiins-style "Chip" key if
+                # ever present on some build — additive, not exclusive.
+                for legacy in ("Chip", "Board", "PCB"):
+                    v = _opt_float(t.get(legacy))
+                    if v is not None and v > 0:
+                        all_temp_vals.append(v)
+            if all_temp_vals:
+                sample.temp_chip_c = round(max(all_temp_vals), 1)
 
         # --- Fans extension: per-fan RPM and PWM% ---
         # Shape: {"FANS":[{"ID":0,"RPM":3500,"Speed":75}, ...]}
@@ -426,6 +458,172 @@ class LuxosDriver(MinerDriver):
                     sample.worker = pool.get("User")
                     break
 
+        # --- Structured fan list ---
+        # Mirrors what we put in the legacy `fans_extra` dict but also
+        # carries the physical connector label (e.g. "J12 | J14") that
+        # LuxOS exposes in the `FAN` field. The frontend uses this list
+        # to render one tile per fan with the connector as a tooltip;
+        # the legacy fields above stay populated so the time-series DB
+        # and the other-family drivers still work unchanged.
+        for fdef in f_list or []:
+            fid = _opt_int(fdef.get("ID"))
+            sample.fans.append(
+                FanSnapshot(
+                    id=fid if fid is not None else len(sample.fans),
+                    rpm=_opt_int(fdef.get("RPM")),
+                    speed_pct=_opt_float(fdef.get("Speed")),
+                    connector=fdef.get("FAN") if isinstance(fdef.get("FAN"), str) else None,
+                )
+            )
+
+        # --- Per-board structured snapshot ---
+        # For each board surfaced by `devs`, fan out three additional
+        # read-only LuxOS queries: `frequencyget`, `voltageget`,
+        # `healthchipget`. These are throttled by a semaphore so we
+        # don't open more than _PER_BOARD_PARALLELISM sockets at once
+        # against the small API server.
+        per_board_raw: dict[int, dict[str, Any]] = {}
+        if d_list:
+            board_ids: list[int] = []
+            for i, dev in enumerate(d_list):
+                bid = _opt_int(dev.get("ID"))
+                if bid is None:
+                    bid = i
+                board_ids.append(bid)
+
+            sem = asyncio.Semaphore(_PER_BOARD_PARALLELISM)
+
+            async def _call(cmd: str, bid: int) -> dict[str, Any] | None:
+                async with sem:
+                    try:
+                        return await self._client().call(cmd, parameter=str(bid))
+                    except CgminerError:
+                        return None
+
+            tasks = []
+            for bid in board_ids:
+                tasks.append(_call("frequencyget", bid))
+                tasks.append(_call("voltageget", bid))
+                tasks.append(_call("healthchipget", bid))
+            results = await asyncio.gather(*tasks)
+
+            # Pre-compute the position-to-label map once: METADATA is
+            # the same shape across all TEMPS entries, so we don't want
+            # to re-walk it per board.
+            temps_metadata = _temps_metadata_labels(temps)
+
+            for idx, dev in enumerate(d_list):
+                bid = board_ids[idx]
+                freq_resp = results[idx * 3]
+                volt_resp = results[idx * 3 + 1]
+                health_resp = results[idx * 3 + 2]
+                per_board_raw[bid] = {
+                    "frequencyget": freq_resp or {},
+                    "voltageget": volt_resp or {},
+                    "healthchipget": health_resp or {},
+                }
+
+                bs = BoardSnapshot(id=bid)
+                bs.status = (
+                    dev.get("Status") if isinstance(dev.get("Status"), str) else None
+                )
+                en = dev.get("Enabled")
+                if isinstance(en, str):
+                    bs.enabled = en.strip().upper() == "Y"
+                connector = dev.get("Connector")
+                if isinstance(connector, str) and connector:
+                    bs.connector = connector
+
+                # Hashrate (MHS in `devs` is MH/s — divide by 1e6 to TH/s)
+                mhs_1m = _opt_float(dev.get("MHS 1m"))
+                mhs_5s = _opt_float(dev.get("MHS 5s"))
+                nominal_mhs = _opt_float(dev.get("Nominal MHS"))
+                if mhs_1m is not None:
+                    bs.hashrate_ths = round(mhs_1m / 1_000_000.0, 4)
+                if mhs_5s is not None:
+                    bs.hashrate_5s_ths = round(mhs_5s / 1_000_000.0, 4)
+                if nominal_mhs is not None:
+                    bs.nominal_ths = round(nominal_mhs / 1_000_000.0, 4)
+
+                # Temperatures: pick all four sensors for this board ID.
+                board_temp_vals: list[float] = []
+                for t in t_list or []:
+                    if _opt_int(t.get("ID")) != bid:
+                        continue
+                    for pos in _TEMP_POSITIONS:
+                        v = _opt_float(t.get(pos))
+                        if v is None or v <= 0:
+                            continue
+                        bs.temps_extra[pos] = v
+                        label = temps_metadata.get(pos)
+                        if label:
+                            bs.temps_labels[pos] = label
+                        board_temp_vals.append(v)
+                # Fall back to the chip temp reported in `devs` if the
+                # temps extension didn't carry per-board sensors.
+                dev_temp = _opt_float(
+                    dev.get("Chip Temp Avg")
+                    or dev.get("Temperature")
+                    or dev.get("Chip Temp")
+                )
+                if dev_temp is not None and dev_temp > 0:
+                    board_temp_vals.append(dev_temp)
+                if board_temp_vals:
+                    bs.temp_chip_c = round(max(board_temp_vals), 1)
+
+                # Frequency (per-board)
+                bs.frequency_mhz = _parse_frequency_response(freq_resp, bid)
+                # Fallback: some older LuxOS builds include Frequency
+                # in `devs` directly.
+                if bs.frequency_mhz is None:
+                    bs.frequency_mhz = _opt_float(
+                        dev.get("Frequency") or dev.get("Nominal chip frequency")
+                    )
+
+                # Voltage (per-board, in volts)
+                bs.voltage_v = _parse_voltage_response(volt_resp, bid)
+
+                # Chip health
+                chips_info, counts = _parse_healthchip_response(health_resp)
+                bs.chips = chips_info
+                bs.chips_total = counts["total"] if counts else None
+                bs.chips_healthy = counts.get("healthy") if counts else None
+                bs.chips_unhealthy = counts.get("unhealthy") if counts else None
+                bs.chips_unknown = counts.get("unknown") if counts else None
+
+                sample.boards.append(bs)
+
+            # --- Aggregate counts ---
+            sample.board_count = len(sample.boards)
+            chip_totals = [
+                b.chips_total for b in sample.boards if b.chips_total is not None
+            ]
+            if chip_totals:
+                sample.chip_count = sum(chip_totals)
+            # ``asic_count`` historically meant "value displayed under
+            # ASIC count in the UI". Older callers expect a number; new
+            # ones should look at chip_count/board_count explicitly. We
+            # prefer the chip count if known (matches LuxOS's own
+            # dashboard), otherwise keep the board count for parity
+            # with the previous behaviour.
+            sample.asic_count = sample.chip_count or sample.board_count
+
+            # Promote per-board freq/voltage into the legacy aggregate
+            # fields when the existing reads didn't populate them. This
+            # lets the existing "Frequency" and "Voltage" tiles in
+            # LiveStats keep showing something sensible on LuxOS.
+            if sample.frequency_mhz is None:
+                fr_vals = [b.frequency_mhz for b in sample.boards if b.frequency_mhz]
+                if fr_vals:
+                    sample.frequency_mhz = round(sum(fr_vals) / len(fr_vals), 1)
+            if sample.voltage_mv is None:
+                v_vals = [b.voltage_v for b in sample.boards if b.voltage_v]
+                if v_vals:
+                    # voltageget returns volts; voltage_mv expects mV.
+                    sample.voltage_mv = round(
+                        (sum(v_vals) / len(v_vals)) * 1000.0, 0
+                    )
+
         # --- Efficiency: derived, not read from the wire ---
         if sample.power_w and sample.hashrate_ths and sample.hashrate_ths > 0:
             sample.efficiency_w_per_ths = round(sample.power_w / sample.hashrate_ths, 2)
@@ -439,6 +637,7 @@ class LuxosDriver(MinerDriver):
             "power": power,
             "pools": pools,
             "stats": stats,
+            "per_board": per_board_raw,
         }
         return sample
 
@@ -492,3 +691,164 @@ def _format_mac(raw: str) -> str:
     if len(raw) != 12:
         return raw
     return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
+
+
+# Sensor positions used by the LuxOS ``temps`` extension. Each TEMPS
+# entry can carry up to four readings keyed by these names; METADATA
+# carries the human-readable label (e.g. "Board Outlet") that goes
+# with each position.
+_TEMP_POSITIONS = ("BottomLeft", "BottomRight", "TopLeft", "TopRight")
+
+
+def _temps_metadata_labels(temps: dict[str, Any]) -> dict[str, str]:
+    """Extract the position→label map from a ``temps`` response.
+
+    Shape example::
+
+        {"METADATA":[{"BottomLeft":{"Label":"Board Outlet",...},
+                      "BottomRight":{"Label":"Water Inlet",...},
+                      ...}]}
+
+    Returns ``{}`` when the firmware doesn't include METADATA — older
+    LuxOS builds omit it, in which case the frontend falls back to
+    rendering the raw position name (BottomLeft, …).
+    """
+    metas = _arr(temps, "METADATA")
+    if not metas:
+        return {}
+    meta = metas[0]
+    out: dict[str, str] = {}
+    for pos in _TEMP_POSITIONS:
+        entry = meta.get(pos)
+        if isinstance(entry, dict):
+            label = entry.get("Label")
+            if isinstance(label, str) and label.strip():
+                out[pos] = label.strip()
+    return out
+
+
+def _parse_frequency_response(resp: dict[str, Any] | None, board_id: int) -> float | None:
+    """Pull the average operating frequency (MHz) out of a ``frequencyget`` reply.
+
+    LuxOS builds vary: some return a single ``FREQUENCY`` entry with a
+    board-wide value, others return a per-chip list. We tolerate both
+    by looking for the most natural keys first and falling back to
+    averaging whatever per-chip numbers we find.
+    """
+    if not resp:
+        return None
+    f_list = _arr(resp, "FREQUENCY") or _arr(resp, "FREQ") or _arr(resp, "FREQS")
+    if not f_list:
+        return None
+    # Single-entry, board-wide shape.
+    if len(f_list) == 1:
+        only = f_list[0]
+        for key in ("Frequency", "AvgFrequency", "Avg Frequency", "Avg", "Value"):
+            v = _opt_float(only.get(key))
+            if v is not None:
+                return round(v, 1)
+    # Per-chip list: average the frequencies we can parse.
+    vals: list[float] = []
+    for entry in f_list:
+        # Filter to chips on this board when the field is present.
+        b = _opt_int(entry.get("Board"))
+        if b is not None and b != board_id:
+            continue
+        v = _opt_float(entry.get("Frequency"))
+        if v is not None and v > 0:
+            vals.append(v)
+    if not vals:
+        return None
+    return round(sum(vals) / len(vals), 1)
+
+
+def _parse_voltage_response(resp: dict[str, Any] | None, board_id: int) -> float | None:
+    """Pull the board voltage (V) out of a ``voltageget`` reply.
+
+    Shape example::
+
+        {"VOLTAGE":[{"Board":0,"IsOnBoard":false,"Voltage":11.88}]}
+    """
+    if not resp:
+        return None
+    v_list = _arr(resp, "VOLTAGE")
+    if not v_list:
+        return None
+    # Prefer the entry matching the requested board id.
+    for entry in v_list:
+        b = _opt_int(entry.get("Board"))
+        if b is not None and b != board_id:
+            continue
+        v = _opt_float(entry.get("Voltage"))
+        if v is not None:
+            return round(v, 2)
+    # Fall back to the first entry.
+    v = _opt_float(v_list[0].get("Voltage"))
+    return round(v, 2) if v is not None else None
+
+
+def _parse_healthchip_response(
+    resp: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Return (chips, counts) from a ``healthchipget`` reply.
+
+    Each chip dict is a compact, frontend-friendly projection of the
+    fields LuxOS returns. We strip the internal serial-style keys
+    (BadHashCount, DoubleHashCount, ReadErrors, …) that aren't useful
+    to surface and would just bloat the JSON payload.
+
+    Counts use the same buckets as the LuxOS dashboard so the
+    "77 Healthy / 0 Unhealthy / 0 Unknown" tile maps 1:1.
+    """
+    if not resp:
+        return [], {}
+    c_list = _arr(resp, "CHIPS")
+    if not c_list:
+        return [], {}
+    chips: list[dict[str, Any]] = []
+    healthy = unhealthy = unknown = 0
+    for entry in c_list:
+        # LuxOS encodes Healthy as "Y", "N", or the string "Unknown".
+        raw_health = entry.get("Healthy")
+        if isinstance(raw_health, str):
+            h = raw_health.strip()
+        else:
+            h = "Unknown"
+        if h == "Y":
+            healthy += 1
+            health_label = "Y"
+        elif h == "N":
+            unhealthy += 1
+            health_label = "N"
+        else:
+            unknown += 1
+            health_label = "Unknown"
+
+        chips.append(
+            {
+                "chip": _opt_int(entry.get("Chip")),
+                "row": _opt_int(entry.get("Row")),
+                "column": _opt_int(entry.get("Column")),
+                "domain": _opt_int(entry.get("Domain")),
+                "healthy": health_label,
+                "is_checking": bool(entry.get("IsChecking")) if "IsChecking" in entry else None,
+                # Optional fields — LuxOS omits these when health == "Unknown".
+                "frequency": _opt_float(entry.get("Frequency")),
+                "ghs_1m": _opt_float(entry.get("GHS 1m")),
+                "ghs_5m": _opt_float(entry.get("GHS 5m")),
+                "ghs_15m": _opt_float(entry.get("GHS 15m")),
+                "score": _opt_float(entry.get("Score")),
+                # `ChipTemp` is only populated by S21/T21-class hardware;
+                # on S19 the per-chip temperature isn't exposed.
+                "chip_temp_c": _opt_float(entry.get("ChipTemp")),
+                "hash_count": _opt_int(entry.get("HashCount")),
+                "hash_expected": _opt_int(entry.get("HashExpected")),
+            }
+        )
+    counts = {
+        "total": len(chips),
+        "healthy": healthy,
+        "unhealthy": unhealthy,
+        "unknown": unknown,
+    }
+    return chips, counts
