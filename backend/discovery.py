@@ -75,17 +75,46 @@ def _enumerate_hosts(cidr: str) -> Iterable[str]:
 
 
 async def _identify_bitaxe(host: str) -> dict | None:
+    """Identify an AxeOS-family host listening on port 80.
+
+    Bitaxe and NerdOctaxe both speak the same REST API on the same
+    port, but the NerdOctaxe firmware emits extra fields that the
+    classic Bitaxe firmware never does. We poll with the Bitaxe
+    driver (it works for both), then peek at the raw response to
+    decide which family bucket the device falls into:
+
+      - ``fanCount > 1``                         → multi-fan board
+      - ``fallbackStratumURL`` present and set   → dual-pool firmware
+      - ``currentA`` present                     → NerdOctaxe PSU sensor
+
+    Any of these signals is enough to mark the host as ``nerdoctaxe``
+    instead of ``bitaxe``. Classic Bitaxes match none of them.
+    """
     drv = BitaxeDriver(host=host, timeout=2)
     sample = await drv.poll()
     if not sample.online:
         return None
+
+    raw = sample.raw or {}
+    fan_count = raw.get("fanCount")
+    try:
+        fan_count_int = int(fan_count) if fan_count is not None else 0
+    except (TypeError, ValueError):
+        fan_count_int = 0
+    has_fallback_url = bool(raw.get("fallbackStratumURL"))
+    has_current_a = "currentA" in raw
+
+    is_nerdoctaxe = fan_count_int > 1 or has_fallback_url or has_current_a
+
+    family = "nerdoctaxe" if is_nerdoctaxe else "bitaxe"
+    default_model = "NerdOctaxe" if is_nerdoctaxe else "Bitaxe"
     return {
-        "family": "bitaxe",
+        "family": family,
         "host": host,
         "port": PORT_BITAXE,
         "mac": sample.mac,
-        "model": sample.model or "Bitaxe",
-        "name": sample.hostname or sample.model or f"Bitaxe {host}",
+        "model": sample.model or default_model,
+        "name": sample.hostname or sample.model or f"{default_model} {host}",
     }
 
 

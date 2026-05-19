@@ -6,7 +6,7 @@
 // Convention: we annotate optional/nullable fields with `| null` because
 // the Python backend returns `null` literally (it doesn't omit keys).
 
-export type MinerFamily = 'bitaxe' | 'canaan' | 'braiins' | 'luxos';
+export type MinerFamily = 'bitaxe' | 'nerdoctaxe' | 'canaan' | 'braiins' | 'luxos';
 
 export interface MinerRecord {
   id: number;
@@ -66,9 +66,20 @@ export interface LiveSample {
   fan_rpm: number | null;
   fan_pct: number | null;
   fans_extra: Record<string, number>;
+  // NerdOctaxe-only: the firmware exposes a second physical fan.
+  // Stay null on Bitaxe and on the cgminer families.
+  fan_rpm_2: number | null;
+  fan_pct_2: number | null;
   frequency_mhz: number | null;
   voltage_mv: number | null;
   asic_count: number | null;
+  // PSU draw in Amps. Populated by the NerdOctaxe driver from the
+  // firmware's `currentA` field; null elsewhere.
+  current_a: number | null;
+  // Aggregate "hardware error" counter — count of nonces the ASIC
+  // returned that failed validation. NerdOctaxe firmware emits this
+  // as `duplicateHWNonces`. Bitaxe doesn't surface it, so null there.
+  hw_errors: number | null;
   uptime_s: number | null;
   accepted: number | null;
   rejected: number | null;
@@ -77,6 +88,12 @@ export interface LiveSample {
   network_difficulty: number | null;
   pool_url: string | null;
   worker: string | null;
+  // Dual-pool fields (NerdOctaxe firmware). `pool_active` is
+  // "primary" | "fallback" when the firmware tells us which one is
+  // currently mining, or null otherwise.
+  pool_url_fallback: string | null;
+  worker_fallback: string | null;
+  pool_active: 'primary' | 'fallback' | string | null;
   raw: Record<string, unknown> | null;
 }
 
