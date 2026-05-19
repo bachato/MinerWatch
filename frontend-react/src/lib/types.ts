@@ -43,6 +43,68 @@ export interface MetricSample {
   worker: string | null;
 }
 
+// Health status of a single ASIC chip, as reported by the LuxOS
+// ``healthchipget`` command. "Y" = healthy, "N" = unhealthy/dead,
+// "Unknown" = the firmware hasn't classified this chip yet (e.g. it
+// was just powered on or the health check is currently in progress).
+export type ChipHealth = 'Y' | 'N' | 'Unknown';
+
+export interface ChipHealthRecord {
+  chip: number | null;
+  row: number | null;
+  column: number | null;
+  domain: number | null;
+  healthy: ChipHealth;
+  is_checking: boolean | null;
+  // Optional fields — LuxOS omits these when health == "Unknown".
+  frequency: number | null;
+  ghs_1m: number | null;
+  ghs_5m: number | null;
+  ghs_15m: number | null;
+  score: number | null;
+  // Per-chip temperature is only reported by S21/T21-class firmware.
+  chip_temp_c: number | null;
+  hash_count: number | null;
+  hash_expected: number | null;
+}
+
+// Per-hashboard snapshot. ``temps_extra`` is keyed by the LuxOS
+// position name (BottomLeft / BottomRight / TopLeft / TopRight) and
+// ``temps_labels`` maps the same key to a human-readable label
+// ("Board Exhaust", "Board Intake", …) that comes from the METADATA
+// section of the ``temps`` reply. Both are empty objects on builds
+// that don't expose this metadata; the frontend then falls back to
+// rendering the raw position name.
+export interface BoardSnapshot {
+  id: number;
+  status: string | null;
+  enabled: boolean | null;
+  connector: string | null;
+  frequency_mhz: number | null;
+  voltage_v: number | null;
+  hashrate_ths: number | null;
+  hashrate_5s_ths: number | null;
+  nominal_ths: number | null;
+  temp_chip_c: number | null;
+  temps_extra: Record<string, number>;
+  temps_labels: Record<string, string>;
+  chips_total: number | null;
+  chips_healthy: number | null;
+  chips_unhealthy: number | null;
+  chips_unknown: number | null;
+  chips: ChipHealthRecord[];
+}
+
+// One physical fan. Today only LuxOS populates this; for other
+// families the array stays empty and the frontend falls back to the
+// legacy single-fan / fan_2 rendering.
+export interface FanSnapshot {
+  id: number;
+  rpm: number | null;
+  speed_pct: number | null;
+  connector: string | null;  // e.g. "J12 | J14" — LuxOS only
+}
+
 // Live sample shape mirrors backend/miners/base.py:MinerSample as serialised
 // by dataclasses.asdict. Most fields overlap with MetricSample; extras
 // like `raw` and the air-inlet/outlet temps live only on the live blob.
@@ -66,6 +128,10 @@ export interface LiveSample {
   fan_rpm: number | null;
   fan_pct: number | null;
   fans_extra: Record<string, number>;
+  // Structured per-fan list (LuxOS only at the moment). When present
+  // the frontend renders one tile per fan with RPM/% and the connector
+  // label; otherwise it falls back to the legacy single-fan rendering.
+  fans: FanSnapshot[];
   // NerdOctaxe-only: the firmware exposes a second physical fan.
   // Stay null on Bitaxe and on the cgminer families.
   fan_rpm_2: number | null;
@@ -73,6 +139,12 @@ export interface LiveSample {
   frequency_mhz: number | null;
   voltage_mv: number | null;
   asic_count: number | null;
+  // Multi-hashboard miners report one entry per physical board plus
+  // the totals. ``board_count`` and ``chip_count`` separate the two
+  // concepts that ``asic_count`` historically conflated.
+  board_count: number | null;
+  chip_count: number | null;
+  boards: BoardSnapshot[];
   // PSU draw in Amps. Populated by the NerdOctaxe driver from the
   // firmware's `currentA` field; null elsewhere.
   current_a: number | null;

@@ -102,29 +102,55 @@ export function LiveStats({ data }: Props) {
       value: <NumberCell value={fmtNum(tempOut, 1)} unit="°C" />,
     });
   }
-  // On NerdOctaxe rename "Fan" → "Fan 1" so the pair "Fan 1 / Fan 2"
-  // reads as a unit. On single-fan miners we keep the original label.
-  const primaryFanLabel = isNerdOctaxe && fanRpm2 !== null ? 'Fan 1' : 'Fan';
-  rows.push({
-    label: primaryFanLabel,
-    value: (
-      <NumberCell
-        value={fanRpm !== null && fanRpm !== undefined ? String(fanRpm) : '—'}
-        unit={`rpm${fanPct !== null && fanPct !== undefined ? ` · ${fmtNum(fanPct, 0)}%` : ''}`}
-      />
-    ),
-  });
-  // NerdOctaxe second fan (only when populated).
-  if (fanRpm2 !== null && fanRpm2 !== undefined) {
+  // Fan rendering:
+  //  - If the driver populated the structured `fans` list (LuxOS today,
+  //    others in the future), render one tile per fan with its RPM,
+  //    duty cycle and connector hint. This gracefully handles any
+  //    number of fans — 4 on an Antminer S19, 2 on a NerdOctaxe, etc.
+  //  - Otherwise fall back to the legacy single-fan / NerdOctaxe-Fan2
+  //    rendering so non-LuxOS drivers stay untouched.
+  const structuredFans = ls?.fans ?? [];
+  if (structuredFans.length > 0) {
+    structuredFans.forEach((f, idx) => {
+      const label = structuredFans.length > 1 ? `Fan ${idx + 1}` : 'Fan';
+      const pctSuffix =
+        f.speed_pct !== null && f.speed_pct !== undefined ? ` · ${fmtNum(f.speed_pct, 0)}%` : '';
+      const connectorSuffix = f.connector ? ` (${f.connector})` : '';
+      rows.push({
+        label: `${label}${connectorSuffix}`,
+        value: (
+          <NumberCell
+            value={f.rpm !== null && f.rpm !== undefined ? String(f.rpm) : '—'}
+            unit={`rpm${pctSuffix}`}
+          />
+        ),
+      });
+    });
+  } else {
+    // On NerdOctaxe rename "Fan" → "Fan 1" so the pair "Fan 1 / Fan 2"
+    // reads as a unit. On single-fan miners we keep the original label.
+    const primaryFanLabel = isNerdOctaxe && fanRpm2 !== null ? 'Fan 1' : 'Fan';
     rows.push({
-      label: 'Fan 2',
+      label: primaryFanLabel,
       value: (
         <NumberCell
-          value={String(fanRpm2)}
-          unit={`rpm${fanPct2 !== null && fanPct2 !== undefined ? ` · ${fmtNum(fanPct2, 0)}%` : ''}`}
+          value={fanRpm !== null && fanRpm !== undefined ? String(fanRpm) : '—'}
+          unit={`rpm${fanPct !== null && fanPct !== undefined ? ` · ${fmtNum(fanPct, 0)}%` : ''}`}
         />
       ),
     });
+    // NerdOctaxe second fan (only when populated).
+    if (fanRpm2 !== null && fanRpm2 !== undefined) {
+      rows.push({
+        label: 'Fan 2',
+        value: (
+          <NumberCell
+            value={String(fanRpm2)}
+            unit={`rpm${fanPct2 !== null && fanPct2 !== undefined ? ` · ${fmtNum(fanPct2, 0)}%` : ''}`}
+          />
+        ),
+      });
+    }
   }
   // NerdOctaxe PSU current draw (only when populated).
   if (currentA !== null && currentA !== undefined) {
@@ -136,7 +162,29 @@ export function LiveStats({ data }: Props) {
   rows.push(
     { label: 'Frequency', value: <NumberCell value={freq ? `${fmtNum(freq, 0)}` : '—'} unit="MHz" /> },
     { label: 'Voltage', value: <NumberCell value={volt ? String(volt) : '—'} unit="mV" /> },
-    { label: 'ASIC count', value: <NumberCell value={ls?.asic_count ? String(ls.asic_count) : '—'} unit="" /> },
+    {
+      // ASIC count: prefer the true chip count when the driver
+      // separates it from the board count (LuxOS today). Older
+      // drivers leave chip_count/board_count null, in which case we
+      // fall back to whatever's in asic_count just like before.
+      label: 'ASIC count',
+      value: (
+        <NumberCell
+          value={
+            ls?.chip_count
+              ? String(ls.chip_count)
+              : ls?.asic_count
+                ? String(ls.asic_count)
+                : '—'
+          }
+          unit={
+            ls?.board_count && ls.board_count > 1
+              ? `chips · ${ls.board_count} boards`
+              : ''
+          }
+        />
+      ),
+    },
     { label: 'Uptime', value: <NumberCell value={fmtUptime(uptime)} unit="" /> },
     {
       label: 'Accepted / Rejected',
