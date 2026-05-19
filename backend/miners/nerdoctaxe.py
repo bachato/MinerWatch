@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .base import PoolSnapshot
 from .bitaxe import BitaxeDriver, _opt_float, _opt_int
 
 
@@ -127,4 +128,61 @@ class NerdOctaxeDriver(BitaxeDriver):
                         elif isinstance(pools[0], dict) and pools[0].get("connected"):
                             sample.pool_active = "primary"
 
+        # ---- Structured pools list ---------------------------------
+        # The Bitaxe parent already filled ``sample.pools`` with a
+        # single entry for the primary slot, and set ``active=True``
+        # on it. On NerdOctaxe that flag is wrong whenever the miner
+        # is currently using the fallback slot, AND we have a second
+        # row to add. Rebuild the list from scratch here using the
+        # scalar fields the parent populated plus the fallback fields
+        # we just parsed.
+        #
+        # ``accepted`` / ``rejected`` are *fleet totals* on AxeOS-fork
+        # firmware (one global counter, not per-slot), so we attribute
+        # them to whichever slot is currently active and leave the
+        # other slot's counters as None. That's the honest answer: the
+        # firmware doesn't break shares down per pool slot, and
+        # zero-ing the inactive row would falsely imply "the fallback
+        # pool has rejected 0 shares" when in reality we just don't
+        # know.
+        pools_list: list[PoolSnapshot] = []
+        if sample.pool_url:
+            pools_list.append(
+                PoolSnapshot(
+                    url=sample.pool_url,
+                    user=sample.worker,
+                    accepted=(
+                        sample.accepted
+                        if sample.pool_active != "fallback"
+                        else None
+                    ),
+                    rejected=(
+                        sample.rejected
+                        if sample.pool_active != "fallback"
+                        else None
+                    ),
+                    active=(sample.pool_active != "fallback"),
+                    slot="primary",
+                )
+            )
+        if sample.pool_url_fallback:
+            pools_list.append(
+                PoolSnapshot(
+                    url=sample.pool_url_fallback,
+                    user=sample.worker_fallback,
+                    accepted=(
+                        sample.accepted
+                        if sample.pool_active == "fallback"
+                        else None
+                    ),
+                    rejected=(
+                        sample.rejected
+                        if sample.pool_active == "fallback"
+                        else None
+                    ),
+                    active=(sample.pool_active == "fallback"),
+                    slot="fallback",
+                )
+            )
+        sample.pools = pools_list
         return sample

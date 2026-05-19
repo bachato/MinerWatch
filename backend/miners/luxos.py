@@ -153,6 +153,7 @@ from .base import (
     FanSnapshot,
     MinerDriver,
     MinerSample,
+    parse_cgminer_pool_entry as _parse_cgminer_pool_entry,
     parse_si_difficulty as _parse_si_difficulty,
 )
 from .cgminer_client import CgminerClient, CgminerError
@@ -439,24 +440,35 @@ class LuxosDriver(MinerDriver):
         else:
             stats = {}
 
-        # --- Pools: active pool + worker ---
+        # --- Pools: structured list + legacy scalars ---
+        # See the parallel comment in ``braiins.py`` — the new
+        # ``pools`` list is what feeds the fleet-wide Pools page, while
+        # ``pool_url`` / ``worker`` stay populated for the existing
+        # dashboard cards, the time-series DB and the alerts.
         try:
             pools = await cli.call("pools")
         except CgminerError:
             pools = {}
         p_list = _arr(pools, "POOLS")
-        # Stratum Active = true wins; fall back to first Alive pool.
-        for pool in p_list or []:
-            if str(pool.get("Stratum Active")).lower() == "true":
-                sample.pool_url = pool.get("Stratum URL") or pool.get("URL")
-                sample.worker = pool.get("User")
+        sample.pools = [_parse_cgminer_pool_entry(p) for p in p_list]
+        sample.pools.sort(
+            key=lambda p: (p.priority if p.priority is not None else 999, p.url or "")
+        )
+        chosen = None
+        for p in sample.pools:
+            if p.active:
+                chosen = p
                 break
-        if not sample.pool_url:
-            for pool in p_list or []:
-                if str(pool.get("Status", "")).lower() == "alive":
-                    sample.pool_url = pool.get("Stratum URL") or pool.get("URL")
-                    sample.worker = pool.get("User")
+        if chosen is None:
+            for p in sample.pools:
+                if p.status == "alive":
+                    chosen = p
                     break
+        if chosen is None and sample.pools:
+            chosen = sample.pools[0]
+        if chosen is not None:
+            sample.pool_url = chosen.url
+            sample.worker = chosen.user
 
         # --- Structured fan list ---
         # Mirrors what we put in the legacy `fans_extra` dict but also

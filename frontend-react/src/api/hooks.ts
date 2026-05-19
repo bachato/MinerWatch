@@ -13,6 +13,7 @@ import type {
   MinerCreatePayload,
   MinerDetailResponse,
   MinerListResponse,
+  PoolsResponse,
   PredictionResponse,
   PushTestResponse,
   SettingsResponse,
@@ -39,6 +40,17 @@ export function useMiners() {
   return useQuery({
     queryKey: ['miners'],
     queryFn: ({ signal }) => api<MinerListResponse>('/api/miners', { signal }),
+    refetchInterval: FIVE_SECONDS,
+  });
+}
+
+// Fleet-wide flat list of (miner, pool slot) rows — drives the Pools
+// page. Same cadence as useMiners; the backend reads this from the
+// in-memory poll cache so there's no DB cost.
+export function usePools() {
+  return useQuery({
+    queryKey: ['pools'],
+    queryFn: ({ signal }) => api<PoolsResponse>('/api/pools', { signal }),
     refetchInterval: FIVE_SECONDS,
   });
 }

@@ -380,6 +380,78 @@ async def api_list_miners() -> dict:
     return {"miners": out}
 
 
+@app.get("/api/pools")
+async def api_list_pools() -> dict:
+    """Flat view of every (miner, pool slot) currently configured.
+
+    The shape is intentionally a single denormalised list (rather than
+    a per-miner nested structure) because the Pools page in the SPA is
+    a sortable / filterable table: one row per pool slot makes that a
+    one-liner to render, with the alternative — grouping by URL on the
+    server — left as a client-side toggle.
+
+    Reads from :attr:`poller.last_results` (the live in-memory snapshot
+    map keyed by miner id), so this endpoint costs no DB hits and
+    refreshes at the cadence of the poller.
+
+    For miners we haven't polled yet (e.g. just-added, or the poller
+    hasn't ticked since startup), we synthesise a placeholder row from
+    the DB record so the user still sees the miner in the table —
+    showing one row per known miner is friendlier than an empty page
+    that looks broken until the first poll completes.
+    """
+    miners = await db.list_miners()
+    rows: list[dict[str, Any]] = []
+    for m in miners:
+        sample = poller.last_results.get(m["id"])
+        live_online = bool(sample.online) if sample else None
+        live_error = sample.error if sample else None
+        miner_meta = {
+            "miner_id": m["id"],
+            "miner_name": m.get("name") or m.get("host"),
+            "miner_host": m.get("host"),
+            "family": m.get("family"),
+            "live_online": live_online,
+            "live_error": live_error,
+        }
+        if sample and sample.pools:
+            for p in sample.pools:
+                rows.append(
+                    {
+                        **miner_meta,
+                        "url": p.url,
+                        "user": p.user,
+                        "status": p.status,
+                        "priority": p.priority,
+                        "accepted": p.accepted,
+                        "rejected": p.rejected,
+                        "stale": p.stale,
+                        "last_share_ts": p.last_share_ts,
+                        "active": p.active,
+                        "slot": p.slot,
+                    }
+                )
+        else:
+            # No live pools yet — emit a placeholder so the row still
+            # appears. Fields are None because we don't have a sample.
+            rows.append(
+                {
+                    **miner_meta,
+                    "url": None,
+                    "user": None,
+                    "status": None,
+                    "priority": None,
+                    "accepted": None,
+                    "rejected": None,
+                    "stale": None,
+                    "last_share_ts": None,
+                    "active": None,
+                    "slot": None,
+                }
+            )
+    return {"pools": rows}
+
+
 @app.post("/api/miners")
 async def api_create_miner(payload: MinerCreate) -> dict:
     if payload.family not in DRIVERS:

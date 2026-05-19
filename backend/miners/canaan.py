@@ -27,7 +27,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .base import MinerDriver, MinerSample, parse_si_difficulty as _parse_si_difficulty
+from .base import (
+    MinerDriver,
+    MinerSample,
+    parse_cgminer_pool_entry as _parse_cgminer_pool_entry,
+    parse_si_difficulty as _parse_si_difficulty,
+)
 from .cgminer_client import CgminerClient, CgminerError
 
 
@@ -330,25 +335,36 @@ def _enrich_from_estats(sample: MinerSample, stats: dict[str, Any]) -> None:
 
 
 def _enrich_from_pools(sample: MinerSample, pools: dict[str, Any]) -> None:
+    """Populate ``sample.pools`` and the legacy ``pool_url``/``worker``.
+
+    Avalon firmware speaks the cgminer ``pools`` dialect, so the shared
+    parser in ``base.py`` handles the per-entry shape; we just sort and
+    pick the "chosen" entry to fill the legacy scalars (still read by
+    the dashboard cards, the DB and the alerts pipeline).
+    """
     plist = pools.get("POOLS")
     if not isinstance(plist, list):
         return
-    # The pool with Stratum Active = true takes priority
-    for p in plist:
-        if not isinstance(p, dict):
-            continue
-        if str(p.get("Stratum Active")).lower() == "true":
-            sample.pool_url = p.get("Stratum URL") or p.get("URL")
-            sample.worker = p.get("User")
-            return
-    # Fallback: first alive
-    for p in plist:
-        if not isinstance(p, dict):
-            continue
-        if str(p.get("Status", "")).lower() == "alive":
-            sample.pool_url = p.get("Stratum URL") or p.get("URL")
-            sample.worker = p.get("User")
-            return
+    entries = [_parse_cgminer_pool_entry(p) for p in plist if isinstance(p, dict)]
+    entries.sort(
+        key=lambda p: (p.priority if p.priority is not None else 999, p.url or "")
+    )
+    sample.pools = entries
+    chosen = None
+    for p in entries:
+        if p.active:
+            chosen = p
+            break
+    if chosen is None:
+        for p in entries:
+            if p.status == "alive":
+                chosen = p
+                break
+    if chosen is None and entries:
+        chosen = entries[0]
+    if chosen is not None:
+        sample.pool_url = chosen.url
+        sample.worker = chosen.user
 
 
 # Parser for strings like "Foo[bar] Baz[qux]". Handles values with

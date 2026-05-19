@@ -15,7 +15,12 @@ from typing import Any
 
 import httpx
 
-from .base import MinerDriver, MinerSample, parse_si_difficulty as _parse_si_difficulty
+from .base import (
+    MinerDriver,
+    MinerSample,
+    PoolSnapshot,
+    parse_si_difficulty as _parse_si_difficulty,
+)
 
 
 class BitaxeDriver(MinerDriver):
@@ -113,7 +118,7 @@ class BitaxeDriver(MinerDriver):
             pool_url = f"{pool_url}:{data['stratumPort']}"
         worker = data.get("stratumUser")
 
-        return MinerSample(
+        sample = MinerSample(
             family=self.family,
             host=self.host,
             online=True,
@@ -141,6 +146,30 @@ class BitaxeDriver(MinerDriver):
             worker=worker,
             raw=data,
         )
+
+        # Synthesise the structured pools list. AxeOS only exposes one
+        # stratum slot (the dual-pool fields are NerdOctaxe-specific —
+        # see :class:`NerdOctaxeDriver`). ``status`` is left None
+        # because AxeOS has no equivalent of cgminer's Alive/Dead flag:
+        # if the miner answered ``/api/system/info`` and we got here,
+        # the pool *for this miner* is at least reachable, but the
+        # frontend decides how to render that (typically "—" or an
+        # implicit health pill derived from accepted vs rejected). The
+        # share counters are fleet-totals — AxeOS doesn't break them
+        # down per slot, so on a Bitaxe accepted/rejected on the only
+        # pool row are simply the miner's totals.
+        if pool_url:
+            sample.pools = [
+                PoolSnapshot(
+                    url=pool_url,
+                    user=worker,
+                    accepted=accepted,
+                    rejected=rejected,
+                    active=True,
+                    slot="primary",
+                )
+            ]
+        return sample
 
     # ---- Controlli ----
 

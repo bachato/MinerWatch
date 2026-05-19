@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import MinerDriver, MinerSample, parse_si_difficulty as _parse_si_difficulty
+from .base import (
+    MinerDriver,
+    MinerSample,
+    parse_cgminer_pool_entry as _parse_cgminer_pool_entry,
+    parse_si_difficulty as _parse_si_difficulty,
+)
 from .cgminer_client import CgminerClient, CgminerError
 
 
@@ -236,20 +241,39 @@ class BraiinsDriver(MinerDriver):
             # overwrite hashrate_ths, which is already the live value
             # from `summary`.
 
-        # Pools
+        # Pools — populate both the legacy scalar fields (pool_url /
+        # worker, used by the dashboard cards, the DB and the alerts
+        # pipeline) AND the new structured ``pools`` list, used by the
+        # fleet-wide /pools page. Order of preference for the legacy
+        # scalars: active stratum > first Alive > first row.
         try:
             pools = await cli.call("pools")
         except CgminerError:
             pools = {}
         p_list = _arr(pools, "POOLS")
-        for pool in p_list or []:
-            if str(pool.get("Status", "")).lower() == "alive":
-                sample.pool_url = pool.get("Stratum URL") or pool.get("URL")
-                sample.worker = pool.get("User")
+        sample.pools = [_parse_cgminer_pool_entry(p) for p in p_list]
+        # Sort by priority when present — keeps the UI deterministic
+        # across polls even if the firmware reshuffles the array.
+        sample.pools.sort(
+            key=lambda p: (p.priority if p.priority is not None else 999, p.url or "")
+        )
+        # Legacy scalars: prefer the active pool, fall back to first Alive,
+        # then to the first row.
+        chosen = None
+        for p in sample.pools:
+            if p.active:
+                chosen = p
                 break
-        if not sample.pool_url and p_list:
-            sample.pool_url = p_list[0].get("Stratum URL") or p_list[0].get("URL")
-            sample.worker = p_list[0].get("User")
+        if chosen is None:
+            for p in sample.pools:
+                if p.status == "alive":
+                    chosen = p
+                    break
+        if chosen is None and sample.pools:
+            chosen = sample.pools[0]
+        if chosen is not None:
+            sample.pool_url = chosen.url
+            sample.worker = chosen.user
 
         # Efficienza
         if sample.power_w and sample.hashrate_ths and sample.hashrate_ths > 0:
