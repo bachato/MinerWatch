@@ -46,11 +46,31 @@ class MinerSample:
     fan_rpm: int | None = None
     fan_pct: float | None = None
     fans_extra: dict[str, int] = field(default_factory=dict)
+    # NerdOctaxe has a second physical fan (the firmware exposes
+    # `fanrpm2`/`fanspeed2`). The Bitaxe-family base only carried a
+    # single fan; rather than abusing `fans_extra` we expose dedicated
+    # second-fan fields so the frontend can render them with the same
+    # styling as the primary fan. They stay None for any driver that
+    # doesn't populate them.
+    fan_rpm_2: int | None = None
+    fan_pct_2: float | None = None
 
     # ASIC
     frequency_mhz: float | None = None
     voltage_mv: float | None = None
     asic_count: int | None = None
+
+    # PSU draw in Amps. Bitaxe doesn't surface this directly, but
+    # NerdOctaxe firmware does (`currentA` in /api/system/info).
+    current_a: float | None = None
+
+    # Aggregate hardware-error counter exposed by the NerdQAxePlus
+    # firmware as `duplicateHWNonces` — count of nonces the ASIC
+    # returned that failed validation. There is *no* per-chip error
+    # rate in the firmware, so this is the most "chip-error-like"
+    # signal available. The frontend can also derive a rejection rate
+    # from accepted/rejected; we expose the raw count here.
+    hw_errors: int | None = None
 
     # Mining
     uptime_s: int | None = None
@@ -70,6 +90,15 @@ class MinerSample:
     network_difficulty: float | None = None
     pool_url: str | None = None
     worker: str | None = None
+
+    # Dual-pool (NerdOctaxe / NerdQAxe Plus firmware). The primary pool
+    # lives in `pool_url`/`worker` above; these mirror the firmware's
+    # fallback-pool config so the frontend can show "Pool 1 / Pool 2".
+    # `pool_active` is "primary" | "fallback" when known (derived from
+    # `stratum.activePoolMode` or `stratum.usingFallback`), or None.
+    pool_url_fallback: str | None = None
+    worker_fallback: str | None = None
+    pool_active: str | None = None
 
     # Original payload for debugging / for extracting non-standard fields
     raw: dict[str, Any] | None = None

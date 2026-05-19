@@ -46,6 +46,29 @@ export function LiveStats({ data }: Props) {
   const volt = v('voltage_mv') as number | null;
   const bestSession = v('best_difficulty') as number | null;
 
+  // ---- NerdOctaxe extras ------------------------------------------
+  // Only the NerdOctaxe driver populates these. They stay null for
+  // every other family, in which case we skip the corresponding row
+  // rather than rendering a "—" placeholder (avoids visual clutter
+  // on Bitaxe/Canaan/etc. dashboards).
+  const currentA = ls?.current_a ?? null;
+  const fanRpm2 = ls?.fan_rpm_2 ?? null;
+  const fanPct2 = ls?.fan_pct_2 ?? null;
+  const hwErrors = ls?.hw_errors ?? null;
+  // Rejection rate: a more "chip-error-like" metric than the raw
+  // duplicate-nonce counter. (accepted + rejected) might be zero on
+  // a freshly booted miner — guard the division.
+  const rejectionRate =
+    accepted !== null && rejected !== null && accepted + rejected > 0
+      ? (rejected / (accepted + rejected)) * 100
+      : null;
+  const poolUrl = (v('pool_url') as string | null) ?? null;
+  const worker = (v('worker') as string | null) ?? null;
+  const poolUrlFallback = ls?.pool_url_fallback ?? null;
+  const workerFallback = ls?.worker_fallback ?? null;
+  const poolActive = ls?.pool_active ?? null;
+  const isNerdOctaxe = family === 'nerdoctaxe';
+
   type Row = { label: string; value: React.ReactNode };
   const rows: Row[] = [
     { label: 'Status', value: <StatusCell status={status} error={error ?? undefined} /> },
@@ -79,16 +102,38 @@ export function LiveStats({ data }: Props) {
       value: <NumberCell value={fmtNum(tempOut, 1)} unit="°C" />,
     });
   }
-  rows.push(
-    {
-      label: 'Fan',
+  // On NerdOctaxe rename "Fan" → "Fan 1" so the pair "Fan 1 / Fan 2"
+  // reads as a unit. On single-fan miners we keep the original label.
+  const primaryFanLabel = isNerdOctaxe && fanRpm2 !== null ? 'Fan 1' : 'Fan';
+  rows.push({
+    label: primaryFanLabel,
+    value: (
+      <NumberCell
+        value={fanRpm !== null && fanRpm !== undefined ? String(fanRpm) : '—'}
+        unit={`rpm${fanPct !== null && fanPct !== undefined ? ` · ${fmtNum(fanPct, 0)}%` : ''}`}
+      />
+    ),
+  });
+  // NerdOctaxe second fan (only when populated).
+  if (fanRpm2 !== null && fanRpm2 !== undefined) {
+    rows.push({
+      label: 'Fan 2',
       value: (
         <NumberCell
-          value={fanRpm !== null && fanRpm !== undefined ? String(fanRpm) : '—'}
-          unit={`rpm${fanPct !== null && fanPct !== undefined ? ` · ${fmtNum(fanPct, 0)}%` : ''}`}
+          value={String(fanRpm2)}
+          unit={`rpm${fanPct2 !== null && fanPct2 !== undefined ? ` · ${fmtNum(fanPct2, 0)}%` : ''}`}
         />
       ),
-    },
+    });
+  }
+  // NerdOctaxe PSU current draw (only when populated).
+  if (currentA !== null && currentA !== undefined) {
+    rows.push({
+      label: 'PSU current',
+      value: <NumberCell value={fmtNum(currentA, 2)} unit="A" />,
+    });
+  }
+  rows.push(
     { label: 'Frequency', value: <NumberCell value={freq ? `${fmtNum(freq, 0)}` : '—'} unit="MHz" /> },
     { label: 'Voltage', value: <NumberCell value={volt ? String(volt) : '—'} unit="mV" /> },
     { label: 'ASIC count', value: <NumberCell value={ls?.asic_count ? String(ls.asic_count) : '—'} unit="" /> },
@@ -102,11 +147,49 @@ export function LiveStats({ data }: Props) {
         />
       ),
     },
-    {
-      label: 'Best difficulty (session)',
-      value: <NumberCell value={bestSession ? fmtDifficulty(bestSession) : '—'} unit="" />,
-    },
   );
+  // Chip-error tiles — only on NerdOctaxe (firmware exposes the
+  // aggregate `duplicateHWNonces` counter; nothing equivalent on
+  // classic Bitaxe). The "Rejection rate" tile is computed from
+  // accepted/rejected and is therefore available even when
+  // hw_errors is still null on a freshly booted device.
+  if (isNerdOctaxe) {
+    if (rejectionRate !== null) {
+      rows.push({
+        label: 'Rejection rate',
+        value: <NumberCell value={fmtNum(rejectionRate, 3)} unit="%" />,
+      });
+    }
+    if (hwErrors !== null && hwErrors !== undefined) {
+      rows.push({
+        label: 'HW errors',
+        value: <NumberCell value={String(hwErrors)} unit="" />,
+      });
+    }
+  }
+  rows.push({
+    label: 'Best difficulty (session)',
+    value: <NumberCell value={bestSession ? fmtDifficulty(bestSession) : '—'} unit="" />,
+  });
+  // Pool config — show only on NerdOctaxe, since the dual-pool view
+  // doesn't make sense on the other families. We show the primary
+  // pool always and the fallback only when configured. `pool_active`
+  // gets a small badge so the user can tell at a glance which one is
+  // currently mining.
+  if (isNerdOctaxe) {
+    rows.push({
+      label: 'Pool (primary)',
+      value: <PoolCell url={poolUrl} worker={worker} active={poolActive === 'primary'} />,
+    });
+    if (poolUrlFallback) {
+      rows.push({
+        label: 'Pool (fallback)',
+        value: (
+          <PoolCell url={poolUrlFallback} worker={workerFallback} active={poolActive === 'fallback'} />
+        ),
+      });
+    }
+  }
 
   return (
     <Card>
@@ -147,6 +230,50 @@ interface NumberCellProps {
   value: string;
   unit: string;
   tone?: ReturnType<typeof tempTone>;
+}
+
+/**
+ * Tile that renders a pool config (URL + worker) with an optional
+ * "active" dot. Used by the NerdOctaxe-only Pool (primary)/(fallback)
+ * rows in the LiveStats grid. The text intentionally renders in two
+ * lines because pool URLs and worker names are both long enough that
+ * cramming them onto one line truncates one or the other.
+ */
+function PoolCell({
+  url,
+  worker,
+  active,
+}: {
+  url: string | null;
+  worker: string | null;
+  active?: boolean;
+}) {
+  if (!url && !worker) {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="flex flex-col">
+      <span className="flex items-center gap-1.5 truncate text-foreground">
+        {active && (
+          <span
+            className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400"
+            title="Currently mining on this pool"
+          />
+        )}
+        <span className="truncate font-normal" title={url ?? undefined}>
+          {url ?? '—'}
+        </span>
+      </span>
+      {worker && (
+        <span
+          className="truncate text-[10px] font-normal text-muted-foreground"
+          title={worker}
+        >
+          {worker}
+        </span>
+      )}
+    </span>
+  );
 }
 
 function NumberCell({ value, unit, tone }: NumberCellProps) {

@@ -98,6 +98,7 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="bitaxe">Bitaxe / NerdQAxe</option>
+                <option value="nerdoctaxe">NerdOctaxe (8-ASIC)</option>
                 <option value="canaan">Canaan / Avalon</option>
                 <option value="braiins">Braiins / BMM</option>
                 <option value="luxos">LuxOS (Antminer)</option>
@@ -108,7 +109,7 @@ export function AddMinerDialog({ open, onOpenChange }: Props) {
               <Input
                 id="port"
                 type="number"
-                placeholder={family === 'bitaxe' ? '80' : '4028'}
+                placeholder={family === 'bitaxe' || family === 'nerdoctaxe' ? '80' : '4028'}
                 value={port}
                 onChange={(e) => setPort(e.target.value)}
               />
