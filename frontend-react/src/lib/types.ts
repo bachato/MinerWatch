@@ -108,6 +108,13 @@ export interface LivePool {
   last_share_ts: number | null;
   active: boolean | null;
   slot: 'primary' | 'fallback' | string | null;
+  // Round-trip latency to the pool (ms), measured by the miner itself.
+  // Exposed by Bitaxe (responseTime), NerdQAxe (per-pool pingRtt) and
+  // Avalon (PING in MM ID0). Null for Braiins/LuxOS (cgminer pools has
+  // no latency field).
+  ping_ms: number | null;
+  // Ping packet-loss % — NerdQAxe only; null elsewhere.
+  ping_loss: number | null;
 }
 
 // One physical fan. Today only LuxOS populates this; for other
@@ -233,6 +240,11 @@ export interface PoolRow {
   // "primary" | "fallback" | null — only filled for the AxeOS family;
   // cgminer firmwares use ``priority`` instead.
   slot: 'primary' | 'fallback' | string | null;
+  // Pool ping (ms), measured by the miner. Null where the firmware
+  // doesn't expose it (Braiins, LuxOS).
+  ping_ms: number | null;
+  // Ping packet-loss % — NerdQAxe only; null elsewhere.
+  ping_loss: number | null;
 }
 
 export interface PoolsResponse {

@@ -158,6 +158,13 @@ class BitaxeDriver(MinerDriver):
         # share counters are fleet-totals — AxeOS doesn't break them
         # down per slot, so on a Bitaxe accepted/rejected on the only
         # pool row are simply the miner's totals.
+        #
+        # ``responseTime`` is AxeOS's stratum round-trip latency in ms
+        # (this is the "ping" shown in the AxeOS web UI). It's a single
+        # miner-level value — attributed here to the only pool slot.
+        # The NerdQAxe fork reports None here and uses per-pool
+        # ``pingRtt`` instead; :class:`NerdOctaxeDriver` overrides this.
+        ping_ms = _opt_float(data.get("responseTime"))
         if pool_url:
             sample.pools = [
                 PoolSnapshot(
@@ -167,6 +174,7 @@ class BitaxeDriver(MinerDriver):
                     rejected=rejected,
                     active=True,
                     slot="primary",
+                    ping_ms=ping_ms,
                 )
             ]
         return sample

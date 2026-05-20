@@ -429,6 +429,8 @@ async def api_list_pools() -> dict:
                         "last_share_ts": p.last_share_ts,
                         "active": p.active,
                         "slot": p.slot,
+                        "ping_ms": p.ping_ms,
+                        "ping_loss": p.ping_loss,
                     }
                 )
         else:
@@ -447,6 +449,8 @@ async def api_list_pools() -> dict:
                     "last_share_ts": None,
                     "active": None,
                     "slot": None,
+                    "ping_ms": None,
+                    "ping_loss": None,
                 }
             )
     return {"pools": rows}

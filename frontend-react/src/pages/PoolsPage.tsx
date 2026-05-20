@@ -46,6 +46,7 @@ type SortKey =
   | 'url'
   | 'user'
   | 'status'
+  | 'ping'
   | 'accepted'
   | 'rejected'
   | 'stale'
@@ -146,6 +147,10 @@ export function PoolsPage() {
         case 'status':
           av = poolHealth(a).label;
           bv = poolHealth(b).label;
+          break;
+        case 'ping':
+          av = a.ping_ms;
+          bv = b.ping_ms;
           break;
         case 'accepted':
           av = a.accepted;
@@ -269,6 +274,13 @@ export function PoolsPage() {
                   <Th label="User" sortKey="user" sort={sort} onSort={toggleSort} />
                   <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} />
                   <Th
+                    label="Ping"
+                    sortKey="ping"
+                    sort={sort}
+                    onSort={toggleSort}
+                    align="right"
+                  />
+                  <Th
                     label="Accepted"
                     sortKey="accepted"
                     sort={sort}
@@ -316,9 +328,11 @@ export function PoolsPage() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Stale and Last share are only reported by cgminer-family firmwares
-        (Braiins, LuxOS, Avalon). AxeOS-based miners (Bitaxe, NerdQAxe, NerdOctaxe)
-        don't expose them, so those cells show "—".
+        Ping is the round-trip latency to the pool as measured by the miner
+        itself — reported by Bitaxe, NerdQAxe/NerdOctaxe (per pool) and Avalon,
+        but not by Braiins or LuxOS. Stale and Last share come from
+        cgminer-family firmwares (Braiins, LuxOS, Avalon) and aren't exposed by
+        AxeOS-based miners. Any value a firmware doesn't report shows "—".
       </p>
     </div>
   );
@@ -399,6 +413,20 @@ function PoolRowView({ row }: { row: PoolRow }) {
         <Badge variant={health.tone} className="whitespace-nowrap">
           {health.label}
         </Badge>
+      </td>
+      <td className="px-3 py-2 text-right align-top tabular-nums">
+        {row.ping_ms === null ? (
+          '—'
+        ) : (
+          <>
+            {row.ping_ms.toFixed(0)} ms
+            {row.ping_loss !== null && row.ping_loss > 0 && (
+              <div className="text-[11px] text-amber-400">
+                {row.ping_loss.toFixed(0)}% loss
+              </div>
+            )}
+          </>
+        )}
       </td>
       <td className="px-3 py-2 text-right align-top tabular-nums">
         {fmtCount(row.accepted)}

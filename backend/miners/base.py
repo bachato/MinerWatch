@@ -123,6 +123,18 @@ class PoolSnapshot:
     last_share_ts: int | None = None  # epoch seconds; cgminer "Last Share Time"
     active: bool | None = None        # this is the slot the miner is mining on
     slot: str | None = None           # "primary" / "fallback" hint for AxeOS
+    # Round-trip latency to the pool, in milliseconds, as measured by
+    # the *miner itself* (not a server-side probe). Field availability:
+    #   * Bitaxe (AxeOS):       ``responseTime`` — miner-level, attributed
+    #                           to the single pool slot.
+    #   * NerdQAxe/NerdOctaxe:  ``stratum.pools[i].pingRtt`` — per-pool.
+    #   * Avalon/Canaan:        ``PING[..]`` inside the MM ID0 string —
+    #                           miner-level, attributed to the active pool.
+    #   * Braiins / LuxOS:      not exposed by cgminer ``pools`` — stays None.
+    ping_ms: float | None = None
+    # Packet-loss % for the ping, when the firmware reports it
+    # (NerdQAxe ``pingLoss``). None everywhere else.
+    ping_loss: float | None = None
 
 
 @dataclass
