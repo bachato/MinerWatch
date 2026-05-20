@@ -129,6 +129,15 @@ class CanaanDriver(MinerDriver):
             pools = {}
         _enrich_from_pools(sample, pools)
 
+        # --- Pool ping (miner-level) ---------------------------------
+        # Avalon firmware reports the stratum round-trip latency inside
+        # the ``MM ID0`` bracketed string as ``PING[33]`` (milliseconds)
+        # — this is the "ping" shown in the Avalon web UI. It's a single
+        # miner-level value (not per-pool), so we attribute it to the
+        # active pool. Done after ``_enrich_from_pools`` so the pool
+        # list already exists.
+        _attach_ping_from_estats(sample, stats)
+
         # Efficiency
         if sample.power_w and sample.hashrate_ths and sample.hashrate_ths > 0:
             sample.efficiency_w_per_ths = round(sample.power_w / sample.hashrate_ths, 2)
@@ -365,6 +374,34 @@ def _enrich_from_pools(sample: MinerSample, pools: dict[str, Any]) -> None:
     if chosen is not None:
         sample.pool_url = chosen.url
         sample.worker = chosen.user
+
+
+def _attach_ping_from_estats(sample: MinerSample, stats: dict[str, Any]) -> None:
+    """Parse ``PING[..]`` (ms) from the MM ID0 block and attach it to a pool.
+
+    The value is miner-level on Avalon (one stratum connection), so we
+    attribute it to the active pool — or the first pool when none is
+    flagged active. No-op when the firmware doesn't report PING or when
+    there are no pools to attach it to.
+    """
+    if not sample.pools:
+        return
+    section = _first_section(stats, ("STATS",))
+    if not section:
+        return
+    mm_text = ""
+    for key, value in section.items():
+        if isinstance(key, str) and key.startswith("MM ID") and isinstance(value, str):
+            mm_text = value
+            break
+    if not mm_text:
+        return
+    fields = _parse_bracketed_fields(mm_text)
+    ping = _opt_float(fields.get("PING"))
+    if ping is None:
+        return
+    target = next((p for p in sample.pools if p.active), sample.pools[0])
+    target.ping_ms = ping
 
 
 # Parser for strings like "Foo[bar] Baz[qux]". Handles values with

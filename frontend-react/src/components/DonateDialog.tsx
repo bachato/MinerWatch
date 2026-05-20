@@ -85,70 +85,52 @@ export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
       }
     }
 
-    // Strategy 2: legacy execCommand('copy'). Required for HTTP-on-LAN.
-    // Must keep the textarea visible (not display:none, not
-    // visibility:hidden, not opacity:0) on iOS Safari and on some
-    // Chromium builds — those silently swallow execCommand if the
-    // selection isn't a real on-screen element. We make it 1px and
-    // off-screen but technically visible.
-    const ta = document.createElement('textarea');
-    ta.value = BTC_ADDRESS;
-    ta.setAttribute('readonly', '');
-    ta.style.position = 'fixed';
-    ta.style.top = '0';
-    ta.style.left = '0';
-    ta.style.width = '1px';
-    ta.style.height = '1px';
-    ta.style.padding = '0';
-    ta.style.border = 'none';
-    ta.style.outline = 'none';
-    ta.style.boxShadow = 'none';
-    ta.style.background = 'transparent';
-    document.body.appendChild(ta);
-
-    // Save and restore the current selection so we don't trash whatever
-    // the user had highlighted before clicking Copy.
-    const previousSelection =
-      document.getSelection()?.rangeCount ? document.getSelection()?.getRangeAt(0) : null;
-
-    ta.focus();
-    ta.select();
-    ta.setSelectionRange(0, BTC_ADDRESS.length);
-
-    let succeeded = false;
-    try {
-      // execCommand returns a boolean — false means the browser
-      // refused. We MUST check the return value; the previous code
-      // ignored it.
-      succeeded = document.execCommand('copy');
-    } catch {
-      succeeded = false;
-    }
-
-    document.body.removeChild(ta);
-
-    // Restore the user's prior selection.
-    if (previousSelection) {
-      const sel = document.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(previousSelection);
-    }
-
-    if (succeeded) {
-      setCopyStatus('copied');
-      return;
-    }
-
-    // Strategy 3 (last resort): we couldn't get the bytes into the
-    // clipboard. Select the address node in the dialog so the user
-    // just presses Cmd/Ctrl+C themselves.
+    // Strategy 2: legacy execCommand('copy'). Required for HTTP-on-LAN,
+    // which is the common MinerWatch case (http://192.168.x.y) where
+    // Strategy 1 is unavailable because the context isn't secure.
+    //
+    // CRUCIAL: we select the on-screen <code> node that already lives
+    // *inside* the dialog, NOT a throwaway <textarea> appended to
+    // document.body. The previous version did the latter and it
+    // silently copied nothing: this dialog is a Radix Dialog whose
+    // FocusScope traps focus. Calling `textarea.focus()` fires a
+    // synchronous `focusin` that FocusScope catches and immediately
+    // redirects back into the dialog, so by the time execCommand runs
+    // the textarea is no longer focused and the copy is a no-op.
+    // Selecting a node that's already within the focus scope sidesteps
+    // the trap entirely, and execCommand('copy') copies the current
+    // document selection regardless of which element holds focus.
     const node = addressNodeRef.current;
     if (node) {
+      // Preserve whatever the user had highlighted, then select the
+      // address, copy, and restore.
+      const sel = document.getSelection();
+      const previousRange =
+        sel && sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+
       const range = document.createRange();
       range.selectNodeContents(node);
-      const sel = document.getSelection();
       sel?.removeAllRanges();
       sel?.addRange(range);
+
+      let succeeded = false;
+      try {
+        succeeded = document.execCommand('copy');
+      } catch {
+        succeeded = false;
+      }
+
+      if (succeeded) {
+        // Clean up our selection and put back the user's.
+        sel?.removeAllRanges();
+        if (previousRange) sel?.addRange(previousRange);
+        setCopyStatus('copied');
+        return;
+      }
+
+      // Strategy 3 (last resort): couldn't write to the clipboard at
+      // all. Leave the address highlighted so the user just presses
+      // Cmd/Ctrl+C themselves.
       setCopyStatus('selected');
       return;
     }

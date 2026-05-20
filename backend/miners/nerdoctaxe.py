@@ -99,90 +99,121 @@ class NerdOctaxeDriver(BitaxeDriver):
         sample.worker_fallback = fb_user or None
 
         # Which pool is currently in use. The firmware emits a nested
-        # `stratum` object with `activePoolMode` ("primary"/"fallback")
-        # plus a `usingFallback` boolean in single-fallback mode and
-        # a `pools[]` array (entry 0 = primary, 1 = fallback) where
-        # `connected: true` marks the one actively mining. We prefer
-        # the explicit strings when present, then fall back to the
-        # boolean, then to inspecting the pools array.
+        # `stratum` object whose shape varies across builds:
+        #   * older single-fallback builds: `activePoolMode` as a string
+        #     ("primary"/"fallback") and/or a `usingFallback` boolean.
+        #   * newer builds: `activePoolMode` as an *integer* (a pool-mode
+        #     enum, NOT a slot index), `poolMode` + `poolBalance`, and a
+        #     `pools[]` array (entry 0 = primary, 1 = fallback) where
+        #     `connected: true` marks each pool that's actively mining.
+        #     In "balance" mode BOTH pools are connected at once.
+        # The `connected` flags in `pools[]` are the firmware's own
+        # ground truth, so we trust those over the enum: for the legacy
+        # `pool_active` scalar we report "primary" when slot 0 is
+        # connected (it takes precedence — it's what the dashboard card
+        # shows as the pool being mined), else "fallback".
         stratum = data.get("stratum") if isinstance(data.get("stratum"), dict) else None
+        stratum_pools = (
+            stratum.get("pools")
+            if stratum and isinstance(stratum.get("pools"), list)
+            else None
+        )
         if stratum:
             mode = stratum.get("activePoolMode")
             if isinstance(mode, str) and mode:
-                # Firmware uses lowercase identifiers; normalise here so
-                # the frontend can compare against {"primary","fallback"}.
+                # Older firmware: lowercase string identifier.
                 sample.pool_active = mode.lower()
             elif isinstance(stratum.get("usingFallback"), bool):
                 sample.pool_active = (
                     "fallback" if stratum["usingFallback"] else "primary"
                 )
-            else:
-                pools = stratum.get("pools")
-                if isinstance(pools, list) and pools:
-                    # If the array has 2 entries (dual mode), pick the
-                    # connected one; with 1 entry we can't tell which
-                    # slot it is without `usingFallback`, so leave None.
-                    if len(pools) >= 2:
-                        if isinstance(pools[1], dict) and pools[1].get("connected"):
-                            sample.pool_active = "fallback"
-                        elif isinstance(pools[0], dict) and pools[0].get("connected"):
-                            sample.pool_active = "primary"
+            elif stratum_pools:
+                # Newer firmware: `activePoolMode` is an int enum we
+                # can't map to a slot, so use the per-pool `connected`
+                # flags. Primary (index 0) wins for the scalar.
+                p0 = stratum_pools[0] if len(stratum_pools) >= 1 else None
+                p1 = stratum_pools[1] if len(stratum_pools) >= 2 else None
+                if isinstance(p0, dict) and p0.get("connected"):
+                    sample.pool_active = "primary"
+                elif isinstance(p1, dict) and p1.get("connected"):
+                    sample.pool_active = "fallback"
 
         # ---- Structured pools list ---------------------------------
         # The Bitaxe parent already filled ``sample.pools`` with a
-        # single entry for the primary slot, and set ``active=True``
-        # on it. On NerdOctaxe that flag is wrong whenever the miner
-        # is currently using the fallback slot, AND we have a second
-        # row to add. Rebuild the list from scratch here using the
-        # scalar fields the parent populated plus the fallback fields
-        # we just parsed.
+        # single primary entry. Rebuild it here so we can (a) add the
+        # fallback slot, and (b) — when the firmware exposes the
+        # ``stratum.pools[]`` array — use the *real per-pool* counters
+        # and ping it carries, which is far better than attributing the
+        # global totals to one slot.
         #
-        # ``accepted`` / ``rejected`` are *fleet totals* on AxeOS-fork
-        # firmware (one global counter, not per-slot), so we attribute
-        # them to whichever slot is currently active and leave the
-        # other slot's counters as None. That's the honest answer: the
-        # firmware doesn't break shares down per pool slot, and
-        # zero-ing the inactive row would falsely imply "the fallback
-        # pool has rejected 0 shares" when in reality we just don't
-        # know.
+        # Each ``stratum.pools[i]`` entry carries: connected, accepted,
+        # rejected, pingRtt (ms), pingLoss (%). It does NOT carry the
+        # URL/user — those live in the flat ``stratumURL`` /
+        # ``fallbackStratumURL`` fields the Bitaxe parser already
+        # mapped onto ``sample.pool_url`` / ``pool_url_fallback``.
+        #
+        # When the array is absent (older firmware), we fall back to
+        # the previous behaviour: attribute the global accepted/rejected
+        # to whichever slot is active, and use the top-level
+        # ``lastpingrtt`` as the active slot's ping. The other slot's
+        # counters stay None — zero-ing them would falsely imply "0
+        # rejected" when in truth the firmware just doesn't tell us.
+        top_ping = _opt_float(data.get("lastpingrtt"))
+        top_ping_loss = _opt_float(data.get("recentpingloss"))
+
+        def _slot(
+            url: str | None,
+            user: str | None,
+            slot_name: str,
+            idx: int,
+        ) -> PoolSnapshot | None:
+            if not url:
+                return None
+            entry = (
+                stratum_pools[idx]
+                if stratum_pools and idx < len(stratum_pools)
+                and isinstance(stratum_pools[idx], dict)
+                else None
+            )
+            if entry is not None:
+                # Rich path: per-pool counters + ping straight from the
+                # firmware's pools array.
+                return PoolSnapshot(
+                    url=url,
+                    user=user,
+                    accepted=_opt_int(entry.get("accepted")),
+                    rejected=_opt_int(entry.get("rejected")),
+                    active=bool(entry.get("connected")),
+                    slot=slot_name,
+                    ping_ms=_opt_float(entry.get("pingRtt")),
+                    ping_loss=_opt_float(entry.get("pingLoss")),
+                )
+            # Fallback path: global counters attributed to the active
+            # slot only, ping from the miner-level lastpingrtt.
+            is_active = (
+                sample.pool_active != "fallback"
+                if slot_name == "primary"
+                else sample.pool_active == "fallback"
+            )
+            return PoolSnapshot(
+                url=url,
+                user=user,
+                accepted=sample.accepted if is_active else None,
+                rejected=sample.rejected if is_active else None,
+                active=is_active,
+                slot=slot_name,
+                ping_ms=top_ping if is_active else None,
+                ping_loss=top_ping_loss if is_active else None,
+            )
+
         pools_list: list[PoolSnapshot] = []
-        if sample.pool_url:
-            pools_list.append(
-                PoolSnapshot(
-                    url=sample.pool_url,
-                    user=sample.worker,
-                    accepted=(
-                        sample.accepted
-                        if sample.pool_active != "fallback"
-                        else None
-                    ),
-                    rejected=(
-                        sample.rejected
-                        if sample.pool_active != "fallback"
-                        else None
-                    ),
-                    active=(sample.pool_active != "fallback"),
-                    slot="primary",
-                )
-            )
-        if sample.pool_url_fallback:
-            pools_list.append(
-                PoolSnapshot(
-                    url=sample.pool_url_fallback,
-                    user=sample.worker_fallback,
-                    accepted=(
-                        sample.accepted
-                        if sample.pool_active == "fallback"
-                        else None
-                    ),
-                    rejected=(
-                        sample.rejected
-                        if sample.pool_active == "fallback"
-                        else None
-                    ),
-                    active=(sample.pool_active == "fallback"),
-                    slot="fallback",
-                )
-            )
+        primary = _slot(sample.pool_url, sample.worker, "primary", 0)
+        if primary is not None:
+            pools_list.append(primary)
+        fallback = _slot(
+            sample.pool_url_fallback, sample.worker_fallback, "fallback", 1
+        )
+        if fallback is not None:
+            pools_list.append(fallback)
         sample.pools = pools_list
         return sample
