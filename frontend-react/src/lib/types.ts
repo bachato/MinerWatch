@@ -559,3 +559,59 @@ export interface UpdateInstallResponse {
   new_version: string;
   requires_service_reinstall: boolean;
 }
+
+// ----- Live per-share streaming (AxeOS only)
+//
+// Fed by the firmware log WebSocket via backend/log_streamer.py. Each
+// event is one ASIC result: `diff` is the share difficulty, `target`
+// the pool/stratum target in force, `submitted` = diff >= target (i.e.
+// it was sent to the pool). `accepted` is filled by a later verdict
+// event (null while pending, rare false on a reject).
+//
+// NOTE: `ts` arrives from the backend in epoch *seconds* (float); the
+// useLiveShares hook converts it to milliseconds for charting.
+export interface LiveShareEvent {
+  seq: number;
+  ts: number;
+  diff: number;
+  target: number;
+  submitted: boolean;
+  accepted: boolean | null;
+}
+
+export interface LiveSharesStats {
+  miner_id: number;
+  connected: boolean;
+  current_target: number | null;
+  results_total: number;
+  submitted_total: number;
+  accepted_total: number;
+  rejected_total: number;
+  last_event_ts: number | null;
+  buffered: number;
+  since: number;
+}
+
+export interface LiveSharesRecentResponse {
+  miner_id: number;
+  supported: boolean;
+  events: LiveShareEvent[];
+  stats: LiveSharesStats | null;
+}
+
+// One row of the near-block Hall of Fame. `accepted` is a SQLite int
+// (1/0) or null while the pool verdict is still pending.
+export interface NotableShare {
+  id: number;
+  miner_id: number;
+  ts: number;
+  share_difficulty: number;
+  pool_target: number | null;
+  accepted: number | null;
+}
+
+export interface NotableSharesResponse {
+  miner_id: number;
+  supported: boolean;
+  entries: NotableShare[];
+}

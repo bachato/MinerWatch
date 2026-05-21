@@ -198,6 +198,31 @@ CREATE TABLE IF NOT EXISTS block_finds (
 );
 
 CREATE INDEX IF NOT EXISTS idx_block_finds_ts ON block_finds(ts);
+
+-- Notable shares — the "near-block Hall of Fame". Fed by the live log
+-- streamer (backend/log_streamer.py), NOT the REST poller: every ASIC
+-- result whose difficulty clears a floor is recorded here, so the user
+-- keeps the full history of high shares, not just the running record.
+--
+-- We deliberately store ONLY the numbers. The source log line also
+-- carries the payout address and worker name — those are parsed and
+-- discarded upstream and must never land in this table.
+--
+-- `accepted` is 1/0 once the pool's verdict arrives, or NULL while the
+-- submit is still in flight. Rows are capped per miner (top-by-diff) by
+-- the insert helper, so the table stays small.
+CREATE TABLE IF NOT EXISTS notable_shares (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    miner_id        INTEGER NOT NULL,
+    ts              INTEGER NOT NULL,
+    share_difficulty REAL NOT NULL,
+    pool_target     REAL,
+    accepted        INTEGER,              -- 1 | 0 | NULL (pending)
+    FOREIGN KEY (miner_id) REFERENCES miners(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_notable_shares_miner
+    ON notable_shares(miner_id, share_difficulty DESC);
 """
 
 
@@ -1337,3 +1362,77 @@ async def last_block_find_share_value(miner_id: int) -> float | None:
     if not row or row["v"] is None:
         return None
     return float(row["v"])
+
+
+# ---------- Notable shares (near-block Hall of Fame) ----------
+
+async def insert_notable_share(
+    miner_id: int,
+    ts: int,
+    share_difficulty: float,
+    pool_target: float | None = None,
+    keep_per_miner: int = 500,
+) -> int:
+    """Record a notable share and return its row id.
+
+    Fed by the live log streamer. After inserting we prune this miner's
+    rows down to the ``keep_per_miner`` highest difficulties, so the
+    table can't grow without bound on a long-running instance.
+
+    ``accepted`` is left NULL here; the streamer back-fills it with
+    :func:`set_notable_share_accepted` when the pool verdict arrives.
+    """
+    async with connect() as conn:
+        cur = await conn.execute(
+            """
+            INSERT INTO notable_shares
+              (miner_id, ts, share_difficulty, pool_target, accepted)
+            VALUES (?, ?, ?, ?, NULL)
+            """,
+            (int(miner_id), int(ts), float(share_difficulty),
+             float(pool_target) if pool_target is not None else None),
+        )
+        rowid = cur.lastrowid or 0
+        # Keep only the top-N by difficulty for this miner.
+        await conn.execute(
+            """
+            DELETE FROM notable_shares
+            WHERE miner_id = ?
+              AND id NOT IN (
+                SELECT id FROM notable_shares
+                WHERE miner_id = ?
+                ORDER BY share_difficulty DESC, ts DESC
+                LIMIT ?
+              )
+            """,
+            (int(miner_id), int(miner_id), int(keep_per_miner)),
+        )
+        await conn.commit()
+        return rowid
+
+
+async def set_notable_share_accepted(rowid: int, accepted: bool) -> None:
+    """Back-fill the pool's accept/reject verdict on a notable share."""
+    async with connect() as conn:
+        await conn.execute(
+            "UPDATE notable_shares SET accepted = ? WHERE id = ?",
+            (1 if accepted else 0, int(rowid)),
+        )
+        await conn.commit()
+
+
+async def list_notable_shares(miner_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    """Top notable shares for a miner, highest difficulty first."""
+    async with connect() as conn:
+        async with conn.execute(
+            """
+            SELECT id, miner_id, ts, share_difficulty, pool_target, accepted
+            FROM notable_shares
+            WHERE miner_id = ?
+            ORDER BY share_difficulty DESC, ts DESC
+            LIMIT ?
+            """,
+            (int(miner_id), int(limit)),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]

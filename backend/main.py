@@ -19,7 +19,7 @@ from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -38,6 +38,7 @@ from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
+from .log_streamer import log_streamer
 from . import updater
 
 logging.basicConfig(
@@ -129,10 +130,14 @@ async def on_startup() -> None:
     log.info("Starting MinerWatch — port %s", cfg.server.port)
     await poller.start()
     await auto_fan.start()
+    # Live per-share streamer for AxeOS miners. Self-disables if the
+    # `websockets` lib is missing; only attaches to bitaxe-family miners.
+    await log_streamer.start()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    await log_streamer.stop()
     await auto_fan.stop()
     await poller.stop()
 
@@ -577,6 +582,105 @@ async def api_fleet_best_difficulty_top(
     """
     rows = await db.get_fleet_best_records_ranked(scope=scope, limit=limit)
     return {"scope": scope, "limit": limit, "entries": rows}
+
+
+# ---------- Live per-share streaming (AxeOS only) ----------
+#
+# The REST poller only sees aggregates. For AxeOS miners we also tap the
+# firmware log WebSocket (backend/log_streamer.py) and surface every
+# individual share in real time: a "recent buffer" snapshot for the
+# initial paint, an SSE stream for live updates, and a persisted
+# near-block Hall of Fame.
+
+def _sse(event: str, data: Any) -> str:
+    """Format one Server-Sent Event frame."""
+    import json as _json
+    return f"event: {event}\ndata: {_json.dumps(data)}\n\n"
+
+
+@app.get("/api/miners/{miner_id}/shares/recent")
+async def api_miner_shares_recent(miner_id: int, limit: int = 1000) -> dict:
+    """Snapshot of the in-memory ring buffer of recent share events.
+
+    ``supported`` is False for non-AxeOS miners (Canaan/Braiins/LuxOS),
+    which have no per-share log stream; the frontend uses it to show a
+    "not available for this miner" state instead of an empty chart.
+    """
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    supported = log_streamer.is_supported(miner.get("family"))
+    limit = max(1, min(int(limit), 2000))
+    return {
+        "miner_id": miner_id,
+        "supported": supported,
+        "events": log_streamer.recent(miner_id, limit) if supported else [],
+        "stats": log_streamer.stats(miner_id) if supported else None,
+    }
+
+
+@app.get("/api/miners/{miner_id}/shares/stream")
+async def api_miner_shares_stream(miner_id: int) -> StreamingResponse:
+    """Server-Sent Events stream of live share events for one AxeOS miner.
+
+    Events:
+      - ``snapshot``: {events:[…], stats:{…}} sent once on connect.
+      - ``share``:    {seq, ts, diff, target, submitted} per ASIC result.
+      - ``verdict``:  {seq, accepted} when the pool grades a submitted
+                      share (rare reject → recolour the point red).
+    A ``: keepalive`` comment is emitted every 15 s of silence so proxies
+    don't time the connection out.
+    """
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    if not log_streamer.is_supported(miner.get("family")):
+        raise HTTPException(400, "live share streaming is only available for AxeOS miners")
+
+    async def event_gen():
+        q = log_streamer.subscribe(miner_id)
+        try:
+            yield _sse(
+                "snapshot",
+                {
+                    "events": log_streamer.recent(miner_id),
+                    "stats": log_streamer.stats(miner_id),
+                },
+            )
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                yield _sse(event["type"], event["data"])
+        finally:
+            log_streamer.unsubscribe(miner_id, q)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # disable nginx buffering if proxied
+        },
+    )
+
+
+@app.get("/api/miners/{miner_id}/notable_shares")
+async def api_miner_notable_shares(miner_id: int, limit: int = 50) -> dict:
+    """Per-miner near-block Hall of Fame: highest shares, persisted."""
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    limit = max(1, min(int(limit), 500))
+    entries = await db.list_notable_shares(miner_id, limit)
+    return {
+        "miner_id": miner_id,
+        "supported": log_streamer.is_supported(miner.get("family")),
+        "entries": entries,
+    }
 
 
 @app.get("/api/fleet/prediction")
