@@ -3,7 +3,10 @@ import { BarChart3 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PredictionsCard } from '@/components/analytics/PredictionsCard';
 import { TopSharesCard } from '@/components/analytics/TopSharesCard';
+import { LiveSharesCard } from '@/components/analytics/LiveSharesCard';
 import { useFleetBestTop, useFleetPrediction, useMiners } from '@/api/hooks';
+
+const AXEOS_FAMILIES = new Set(['bitaxe', 'nerdoctaxe']);
 
 export function AnalyticsPage() {
   const { data: predData } = useFleetPrediction();
@@ -16,7 +19,8 @@ export function AnalyticsPage() {
 
   const predVisible = !!(prediction && prediction.fleet_hashrate_ths && prediction.best_alltime);
   const topVisible = !!top?.entries?.length;
-  const anythingVisible = predVisible || topVisible;
+  const hasAxeMiner = miners.some((m) => AXEOS_FAMILIES.has(m.family) && m.enabled !== 0);
+  const anythingVisible = predVisible || topVisible || hasAxeMiner;
 
   return (
     <div className="space-y-5">
@@ -27,6 +31,7 @@ export function AnalyticsPage() {
         </p>
       </header>
 
+      <LiveSharesCard miners={miners} />
       <PredictionsCard data={prediction} />
       <TopSharesCard data={top} miners={miners} />
 

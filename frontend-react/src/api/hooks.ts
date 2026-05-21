@@ -13,6 +13,7 @@ import type {
   MinerCreatePayload,
   MinerDetailResponse,
   MinerListResponse,
+  NotableSharesResponse,
   PoolsResponse,
   PredictionResponse,
   PushTestResponse,
@@ -110,6 +111,19 @@ export function useFleetBestTop(scope: 'session' | 'alltime' = 'alltime', limit 
         { signal },
       ),
     refetchInterval: FIVE_SECONDS,
+  });
+}
+
+// Near-block Hall of Fame for one miner (AxeOS only). Fed by the live
+// log streamer and persisted, so it survives restarts. Refetched on a
+// relaxed cadence — new entries are rare.
+export function useMinerNotableShares(id: number | undefined, limit = 25) {
+  return useQuery({
+    enabled: Number.isInteger(id),
+    queryKey: ['notable-shares', id, limit],
+    queryFn: ({ signal }) =>
+      api<NotableSharesResponse>(`/api/miners/${id}/notable_shares?limit=${limit}`, { signal }),
+    refetchInterval: 15_000,
   });
 }
 
