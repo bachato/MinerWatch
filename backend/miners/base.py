@@ -44,6 +44,12 @@ class BoardSnapshot:
     hashrate_ths: float | None = None      # rolling avg (typically MHS 1m / 1e6)
     hashrate_5s_ths: float | None = None
     nominal_ths: float | None = None       # expected/nominal hashrate per board
+    # Hardware error rate (%) for this board. LuxOS reports
+    # ``Device Hardware%`` as a hard-coded 0, so we compute it ourselves
+    # from the board's ``Hardware Errors`` and ``Diff1 Work`` counters
+    # (classic cgminer formula: HW / (HW + Diff1Work) * 100). None when
+    # the firmware didn't expose the underlying counters.
+    hw_error_rate: float | None = None
 
     # Thermal — chip is the worst case across chips, others are per-sensor.
     # ``temps_extra`` carries every named sensor LuxOS exposes, keyed by
@@ -154,6 +160,11 @@ class MinerSample:
     # Identity
     mac: str | None = None
     model: str | None = None
+    # ASIC chip model (e.g. "BM1370"). Not reported by any LuxOS API
+    # field, so drivers derive it from the miner model via a lookup
+    # table. Stays None when the model is unknown/unmapped. Mirrors what
+    # AxeOS-family firmware exposes directly as ``ASICModel``.
+    chip_model: str | None = None
     hostname: str | None = None
     firmware_version: str | None = None
 
@@ -215,6 +226,11 @@ class MinerSample:
     # signal available. The frontend can also derive a rejection rate
     # from accepted/rejected; we expose the raw count here.
     hw_errors: int | None = None
+    # Fleet-wide hardware error rate (%), aggregated across all boards.
+    # Computed (not read) on LuxOS because its ``Device Hardware%`` field
+    # is hard-coded to 0 — see BoardSnapshot.hw_error_rate. 2-decimal
+    # presentation is left to the frontend. None when uncomputable.
+    hw_error_rate: float | None = None
 
     # Mining
     uptime_s: int | None = None

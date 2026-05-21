@@ -35,7 +35,20 @@ export function HardwareCards({ data }: Props) {
   // ----- Identity -----
   const identity: Row[] = [
     { label: 'Family', value: FAMILY_LABEL[miner.family] ?? miner.family },
-    { label: 'Model', value: miner.model ?? (raw.ASICModel as string | undefined) ?? '—' },
+    {
+      // Fall back to the live sample's model when the stored record has
+      // none — LuxOS leaves miner.model unset (to avoid discovery false
+      // positives) but the driver parses the real model ("Antminer
+      // S19j Pro") fresh on every poll.
+      label: 'Model',
+      value: miner.model ?? ls?.model ?? (raw.ASICModel as string | undefined) ?? '—',
+    },
+    {
+      // ASIC chip model — LuxOS derives it from the model name
+      // (ls.chip_model); AxeOS firmware reports it directly as ASICModel.
+      label: 'Chip model',
+      value: ls?.chip_model ?? (raw.ASICModel as string | undefined) ?? null,
+    },
     {
       label: 'Board version',
       value: raw.boardVersion !== undefined ? String(raw.boardVersion) : null,
@@ -90,6 +103,16 @@ export function HardwareCards({ data }: Props) {
     {
       label: 'Small core count',
       value: raw.smallCoreCount !== undefined ? String(raw.smallCoreCount) : null,
+    },
+    {
+      // Hardware error rate (%), 2 decimals. LuxOS only (computed from
+      // Hardware Errors / Diff1 Work, since its native Device Hardware%
+      // is always 0); null elsewhere so the row is dropped.
+      label: 'HW error rate',
+      value:
+        ls?.hw_error_rate !== null && ls?.hw_error_rate !== undefined
+          ? `${fmtNum(ls.hw_error_rate, 2)} %`
+          : null,
     },
     {
       label: 'Overheat mode',
