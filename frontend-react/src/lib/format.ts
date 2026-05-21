@@ -91,7 +91,8 @@ export function tempTone(t: number | null | undefined): 'normal' | 'warm' | 'hot
 }
 
 export const FAMILY_LABEL: Record<string, string> = {
-  bitaxe: 'Bitaxe / NerdQAxe',
+  bitaxe: 'Bitaxe',
+  nerdoctaxe: 'NerdQAxe / NerdOctaxe',
   canaan: 'Canaan / Avalon',
   braiins: 'Braiins / BMM',
   luxos: 'LuxOS (Antminer)',

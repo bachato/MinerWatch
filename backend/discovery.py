@@ -77,18 +77,25 @@ def _enumerate_hosts(cidr: str) -> Iterable[str]:
 async def _identify_bitaxe(host: str) -> dict | None:
     """Identify an AxeOS-family host listening on port 80.
 
-    Bitaxe and NerdOctaxe both speak the same REST API on the same
-    port, but the NerdOctaxe firmware emits extra fields that the
-    classic Bitaxe firmware never does. We poll with the Bitaxe
-    driver (it works for both), then peek at the raw response to
-    decide which family bucket the device falls into:
+    Bitaxe and NerdQAxe/NerdOctaxe speak the same REST API on the same
+    port. The authoritative way to tell them apart — and to obtain a
+    human-readable model name — is ``deviceModel`` from
+    ``/api/system/asic`` (e.g. "Gamma", "Supra", "SupraHex" for the
+    classic Bitaxe line; "NerdQAxe++", "NerdOCTAXE-Gamma" for the
+    multi-chip fork). See https://osmu.wiki/bitaxe/api.
 
-      - ``fanCount > 1``                         → multi-fan board
-      - ``fallbackStratumURL`` present and set   → dual-pool firmware
-      - ``currentA`` present                     → NerdOctaxe PSU sensor
+    Classification, in order of trust:
+      1. ``deviceModel`` contains "nerd"/"qaxe"/"octaxe" → ``nerdoctaxe``
+      2. genuine fork-only telemetry, as a fallback for firmware that
+         doesn't expose ``deviceModel``:
+           - ``fanCount > 1``      → multi-fan board
+           - ``currentA`` present  → NerdQAxe PSU sensor (the classic
+             Bitaxe firmware reports ``current`` in mA, never ``currentA``)
 
-    Any of these signals is enough to mark the host as ``nerdoctaxe``
-    instead of ``bitaxe``. Classic Bitaxes match none of them.
+    NOTE: ``fallbackStratumURL`` is deliberately NOT used as a signal.
+    It is a standard field on *every* Bitaxe that has a fallback pool
+    configured, so keying on it misclassified ordinary Bitaxes (Gamma,
+    Supra…) as NerdOctaxe.
     """
     drv = BitaxeDriver(host=host, timeout=2)
     sample = await drv.poll()
@@ -96,25 +103,36 @@ async def _identify_bitaxe(host: str) -> dict | None:
         return None
 
     raw = sample.raw or {}
+    # Static ASIC/board identity (deviceModel, asicCount, …). Best-effort:
+    # empty dict on older firmware that doesn't expose the endpoint.
+    asic = await drv.fetch_asic_info()
+    device_model = str(asic.get("deviceModel") or "").strip()
+
     fan_count = raw.get("fanCount")
     try:
         fan_count_int = int(fan_count) if fan_count is not None else 0
     except (TypeError, ValueError):
         fan_count_int = 0
-    has_fallback_url = bool(raw.get("fallbackStratumURL"))
     has_current_a = "currentA" in raw
+    looks_nerd = any(
+        tok in device_model.lower() for tok in ("nerd", "qaxe", "octaxe")
+    )
 
-    is_nerdoctaxe = fan_count_int > 1 or has_fallback_url or has_current_a
+    is_nerdoctaxe = looks_nerd or fan_count_int > 1 or has_current_a
 
     family = "nerdoctaxe" if is_nerdoctaxe else "bitaxe"
     default_model = "NerdOctaxe" if is_nerdoctaxe else "Bitaxe"
+    # Prefer the firmware's own device model name; fall back to the ASIC
+    # chip / board version (older firmware without /api/system/asic) and
+    # finally to the family default.
+    model = device_model or sample.model or default_model
     return {
         "family": family,
         "host": host,
         "port": PORT_BITAXE,
         "mac": sample.mac,
-        "model": sample.model or default_model,
-        "name": sample.hostname or sample.model or f"{default_model} {host}",
+        "model": model,
+        "name": sample.hostname or model or f"{default_model} {host}",
     }
 
 

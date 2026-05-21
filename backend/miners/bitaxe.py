@@ -51,6 +51,29 @@ class BitaxeDriver(MinerDriver):
 
         return self._parse(data)
 
+    async def fetch_asic_info(self) -> dict[str, Any]:
+        """Fetch ``/api/system/asic`` — the static ASIC / board identity.
+
+        This endpoint carries ``deviceModel`` (the human-readable model
+        name: "Gamma", "Supra", "SupraHex", "NerdQAxe++"…), along with
+        ``asicCount`` and the frequency/voltage option lists. It is
+        separate from ``/api/system/info`` (live metrics) and is the
+        authoritative source for *which* device this is — see
+        https://osmu.wiki/bitaxe/api.
+
+        Best-effort: returns ``{}`` on any error, or on firmware too old
+        to expose the endpoint, so callers can fall back to ``ASICModel``.
+        """
+        url = f"{self._base_url()}/api/system/asic"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as cli:
+                resp = await cli.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.HTTPError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
     @staticmethod
     def _ths(hashrate_value: Any) -> float | None:
         """Converte l'hashrate Bitaxe (di solito GH/s in float) in TH/s."""
