@@ -226,27 +226,25 @@ function TempsBlock({ board }: { board: BoardSnapshot }) {
     );
   }
 
-  // Group sensors by label so "Board Exhaust (top)" and "Board Exhaust
-  // (bottom)" end up in the same row. Pairs we know: Top* + Bottom*.
-  type Pair = { label: string; top: number | null; bottom: number | null };
-  const groups = new Map<string, Pair>();
-
-  for (const [pos, value] of entries) {
-    const label = board.temps_labels[pos] ?? pos;
-    const isTop = pos.toLowerCase().startsWith('top');
-    const isBottom = pos.toLowerCase().startsWith('bottom');
-    const key = label;
-    const existing = groups.get(key) ?? { label, top: null, bottom: null };
-    if (isTop) existing.top = value;
-    else if (isBottom) existing.bottom = value;
-    else {
-      // Sensor that isn't position-based: stash on `top` as the
-      // single value (defensive — current LuxOS only emits the four
-      // positions, but firmware-side schema drift is cheap to handle).
-      existing.top = existing.top ?? value;
-    }
-    groups.set(key, existing);
-  }
+  // One cell per physical sensor. LuxOS METADATA labels ALREADY encode
+  // the position (e.g. "Board Exhaust (top)"), so the old code — which
+  // grouped by label and then appended another "(top)/(bottom)" —
+  // produced duplicated rows like "Board Exhaust (top) (top)" with half
+  // the cells empty ("—"). We instead normalise each sensor to a compact
+  // "<vertical> <side>" label (Intake/Inlet = Front, Exhaust/Outlet =
+  // Back) and render the four sensors directly.
+  const cells = entries.map(([pos, value]) => ({
+    pos,
+    label: prettyTempLabel(pos, board.temps_labels[pos]),
+    value,
+  }));
+  // Stable, human reading order; unknown labels fall to the end.
+  const ORDER = ['Top Front', 'Bottom Front', 'Top Back', 'Bottom Back'];
+  cells.sort((a, b) => {
+    const ia = ORDER.indexOf(a.label);
+    const ib = ORDER.indexOf(b.label);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+  });
 
   return (
     <div className="pt-2">
@@ -254,15 +252,48 @@ function TempsBlock({ board }: { board: BoardSnapshot }) {
         Temperature
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-        {[...groups.values()].map((g) => (
-          <div key={g.label} className="contents">
-            <TempCell label={`${g.label} (top)`} value={g.top} />
-            <TempCell label={`${g.label} (bottom)`} value={g.bottom} />
-          </div>
+        {cells.map((c) => (
+          <TempCell key={c.pos} label={c.label} value={c.value} />
         ))}
       </div>
     </div>
   );
+}
+
+/**
+ * Normalise a LuxOS temperature sensor to a compact "<vertical> <side>"
+ * label, e.g. "Top Front". The firmware METADATA label (when present)
+ * already names the sensor ("Board Exhaust (top)", "Board Intake
+ * (bottom)", "Water Inlet", …) and the raw position key (TopLeft,
+ * BottomRight, …) carries the vertical axis as a fallback.
+ *   - Intake / Inlet  → Front (air enters the front)
+ *   - Exhaust / Outlet → Back  (air exits the back)
+ * When only one axis is known we show that; when neither is recognised
+ * we fall back to the firmware label untouched (no doubling).
+ */
+function prettyTempLabel(pos: string, rawLabel?: string): string {
+  const label = (rawLabel ?? pos).trim();
+  const lower = label.toLowerCase();
+  const posLower = pos.toLowerCase();
+
+  const vertical =
+    lower.includes('top') || posLower.startsWith('top')
+      ? 'Top'
+      : lower.includes('bottom') || posLower.startsWith('bottom')
+        ? 'Bottom'
+        : null;
+
+  const side =
+    lower.includes('intake') || lower.includes('inlet')
+      ? 'Front'
+      : lower.includes('exhaust') || lower.includes('outlet')
+        ? 'Back'
+        : null;
+
+  if (vertical && side) return `${vertical} ${side}`;
+  if (side) return side;
+  if (vertical) return vertical;
+  return label;
 }
 
 function TempCell({ label, value }: { label: string; value: number | null }) {

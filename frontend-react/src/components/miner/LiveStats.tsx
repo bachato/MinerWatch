@@ -62,6 +62,10 @@ export function LiveStats({ data }: Props) {
     accepted !== null && rejected !== null && accepted + rejected > 0
       ? (rejected / (accepted + rejected)) * 100
       : null;
+  // Hardware error rate (%). LuxOS computes this server-side (its native
+  // Device Hardware% is hard-coded to 0); other families leave it null.
+  const hwErrorRate = ls?.hw_error_rate ?? null;
+  const boardCount = ls?.board_count ?? 0;
   const poolUrl = (v('pool_url') as string | null) ?? null;
   const worker = (v('worker') as string | null) ?? null;
   const poolUrlFallback = ls?.pool_url_fallback ?? null;
@@ -69,7 +73,7 @@ export function LiveStats({ data }: Props) {
   const poolActive = ls?.pool_active ?? null;
   const isNerdOctaxe = family === 'nerdoctaxe';
 
-  type Row = { label: string; value: React.ReactNode };
+  type Row = { label: string; value: React.ReactNode; title?: string };
   const rows: Row[] = [
     { label: 'Status', value: <StatusCell status={status} error={error ?? undefined} /> },
     { label: 'Hashrate', value: <NumberCell value={fmtNum(hashrate, 2)} unit="TH/s" /> },
@@ -112,12 +116,24 @@ export function LiveStats({ data }: Props) {
   const structuredFans = ls?.fans ?? [];
   if (structuredFans.length > 0) {
     structuredFans.forEach((f, idx) => {
-      const label = structuredFans.length > 1 ? `Fan ${idx + 1}` : 'Fan';
       const pctSuffix =
         f.speed_pct !== null && f.speed_pct !== undefined ? ` · ${fmtNum(f.speed_pct, 0)}%` : '';
-      const connectorSuffix = f.connector ? ` (${f.connector})` : '';
+      // LuxOS exposes only a fan ID (0-3) and a physical connector
+      // string ("J12 | J14"). The connector doesn't match the logical
+      // fan number, which made the old "Fan 1 (fan4)" labels confusing.
+      // Map the fan ID to its physical position instead (J15/J14 = front
+      // pair, J13/J12 = rear pair per Bitmain S19 wiring) and keep the
+      // raw connector available as a hover tooltip for verification.
+      const fanId = f.id ?? idx;
+      const label =
+        family === 'luxos'
+          ? `Fan · ${luxosFanPosition(fanId)}`
+          : structuredFans.length > 1
+            ? `Fan ${idx + 1}`
+            : 'Fan';
       rows.push({
-        label: `${label}${connectorSuffix}`,
+        label,
+        title: f.connector ? `Connector: ${f.connector}` : undefined,
         value: (
           <NumberCell
             value={f.rpm !== null && f.rpm !== undefined ? String(f.rpm) : '—'}
@@ -160,7 +176,13 @@ export function LiveStats({ data }: Props) {
     });
   }
   rows.push(
-    { label: 'Frequency', value: <NumberCell value={freq ? `${fmtNum(freq, 0)}` : '—'} unit="MHz" /> },
+    {
+      // On multi-board LuxOS miners the single value is the average of
+      // the per-board frequencies — label it as such so it's not read
+      // as a single chip/board reading.
+      label: family === 'luxos' && boardCount > 1 ? 'Frequency (avg)' : 'Frequency',
+      value: <NumberCell value={freq ? `${fmtNum(freq, 0)}` : '—'} unit="MHz" />,
+    },
     { label: 'Voltage', value: <NumberCell value={volt ? String(volt) : '—'} unit="mV" /> },
     {
       // ASIC count: prefer the true chip count when the driver
@@ -196,24 +218,31 @@ export function LiveStats({ data }: Props) {
       ),
     },
   );
-  // Chip-error tiles — only on NerdOctaxe (firmware exposes the
-  // aggregate `duplicateHWNonces` counter; nothing equivalent on
-  // classic Bitaxe). The "Rejection rate" tile is computed from
-  // accepted/rejected and is therefore available even when
-  // hw_errors is still null on a freshly booted device.
-  if (isNerdOctaxe) {
-    if (rejectionRate !== null) {
-      rows.push({
-        label: 'Rejection rate',
-        value: <NumberCell value={fmtNum(rejectionRate, 3)} unit="%" />,
-      });
-    }
-    if (hwErrors !== null && hwErrors !== undefined) {
-      rows.push({
-        label: 'HW errors',
-        value: <NumberCell value={String(hwErrors)} unit="" />,
-      });
-    }
+  // Rejection rate — derived from accepted/rejected, so it's available
+  // on every family (computed even when hw counters are still null on a
+  // freshly booted device). 2 decimal places.
+  if (rejectionRate !== null) {
+    rows.push({
+      label: 'Rejection rate',
+      value: <NumberCell value={fmtNum(rejectionRate, 2)} unit="%" />,
+    });
+  }
+  // Hardware error rate (%) — LuxOS computes this server-side from the
+  // Hardware Errors / Diff1 Work counters (its native Device Hardware%
+  // is hard-coded to 0). 2 decimal places.
+  if (hwErrorRate !== null) {
+    rows.push({
+      label: 'HW error rate',
+      value: <NumberCell value={fmtNum(hwErrorRate, 2)} unit="%" />,
+    });
+  }
+  // Raw aggregate HW error counter — NerdOctaxe only (firmware exposes
+  // `duplicateHWNonces`; nothing equivalent on classic Bitaxe).
+  if (isNerdOctaxe && hwErrors !== null && hwErrors !== undefined) {
+    rows.push({
+      label: 'HW errors',
+      value: <NumberCell value={String(hwErrors)} unit="" />,
+    });
   }
   rows.push({
     label: 'Best difficulty (session)',
@@ -248,7 +277,13 @@ export function LiveStats({ data }: Props) {
         <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 md:grid-cols-4">
           {rows.map((r) => (
             <div key={r.label} className="flex flex-col">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              <span
+                className={cn(
+                  'text-[10px] uppercase tracking-wider text-muted-foreground',
+                  r.title && 'cursor-help',
+                )}
+                title={r.title}
+              >
                 {r.label}
               </span>
               <span className="text-sm font-semibold tabular-nums">{r.value}</span>
@@ -258,6 +293,19 @@ export function LiveStats({ data }: Props) {
       </CardContent>
     </Card>
   );
+}
+
+// LuxOS fan ID → physical position. The `fans` API gives only an ID
+// (0-3) and a connector string; it carries no position metadata. Per
+// Bitmain S19 wiring, connectors J15/J14 are the front fan pair and
+// J13/J12 the rear pair, which map to fan IDs 0/1 (front) and 2/3
+// (rear); within each pair we take the lower ID as the top fan. The
+// raw connector stays visible as a tooltip so the mapping is verifiable
+// on the physical unit. Out-of-range IDs fall back to "Fan N".
+const LUXOS_FAN_POSITIONS = ['Top Front', 'Bottom Front', 'Top Back', 'Bottom Back'];
+
+function luxosFanPosition(id: number): string {
+  return LUXOS_FAN_POSITIONS[id] ?? `Fan ${id + 1}`;
 }
 
 function StatusCell({ status, error }: { status: string; error?: string }) {

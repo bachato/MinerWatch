@@ -85,6 +85,10 @@ export interface BoardSnapshot {
   hashrate_ths: number | null;
   hashrate_5s_ths: number | null;
   nominal_ths: number | null;
+  // Per-board hardware error rate (%), 2 decimals. Computed by the
+  // backend from Hardware Errors / Diff1 Work (LuxOS reports the native
+  // Device Hardware% as a constant 0). Null when uncomputable.
+  hw_error_rate: number | null;
   temp_chip_c: number | null;
   temps_extra: Record<string, number>;
   temps_labels: Record<string, string>;
@@ -137,6 +141,9 @@ export interface LiveSample {
   error: string | null;
   mac: string | null;
   model: string | null;
+  // ASIC chip model (e.g. "BM1370"), derived from the model name by the
+  // backend. Null when the model is unknown/unmapped.
+  chip_model: string | null;
   hostname: string | null;
   firmware_version: string | null;
   hashrate_ths: number | null;
@@ -174,6 +181,10 @@ export interface LiveSample {
   // returned that failed validation. NerdOctaxe firmware emits this
   // as `duplicateHWNonces`. Bitaxe doesn't surface it, so null there.
   hw_errors: number | null;
+  // Fleet-wide hardware error rate (%), aggregated across boards.
+  // Computed by the LuxOS driver (its native Device Hardware% is always
+  // 0). 2-decimal presentation handled in the UI. Null elsewhere.
+  hw_error_rate: number | null;
   uptime_s: number | null;
   accepted: number | null;
   rejected: number | null;

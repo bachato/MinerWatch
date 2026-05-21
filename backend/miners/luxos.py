@@ -237,6 +237,9 @@ class LuxosDriver(MinerDriver):
                 or v.get("MODEL")
                 or v.get("Model")
             )
+            # Derive the ASIC chip model from the model name — LuxOS has
+            # no dedicated field for it (see _chip_model_for).
+            sample.chip_model = _chip_model_for(sample.model)
             mac = v.get("MAC")
             if isinstance(mac, str) and mac:
                 sample.mac = _format_mac(mac)
@@ -524,6 +527,14 @@ class LuxosDriver(MinerDriver):
             # to re-walk it per board.
             temps_metadata = _temps_metadata_labels(temps)
 
+            # Accumulators for the fleet-wide HW error rate. LuxOS hard-
+            # codes ``Device Hardware%`` to 0 (documented), so we compute
+            # the rate from the raw ``Hardware Errors`` and ``Diff1 Work``
+            # counters using the classic cgminer formula.
+            total_hw_errors = 0.0
+            total_diff1_work = 0.0
+            saw_hw_counters = False
+
             for idx, dev in enumerate(d_list):
                 bid = board_ids[idx]
                 freq_resp = results[idx * 3]
@@ -603,6 +614,31 @@ class LuxosDriver(MinerDriver):
                 bs.chips_unhealthy = counts.get("unhealthy") if counts else None
                 bs.chips_unknown = counts.get("unknown") if counts else None
 
+                # Final frequency fallback: average the per-chip
+                # frequencies that healthchipget already gave us. Rescues
+                # the per-board reading on builds where frequencyget
+                # returns an unexpected shape and `devs` has no Frequency.
+                if bs.frequency_mhz is None and bs.chips:
+                    chip_freqs = [
+                        _opt_float(c.get("frequency"))
+                        for c in bs.chips
+                    ]
+                    chip_freqs = [f for f in chip_freqs if f is not None and f > 0]
+                    if chip_freqs:
+                        bs.frequency_mhz = round(sum(chip_freqs) / len(chip_freqs), 1)
+
+                # HW error rate (per-board). ``Device Hardware%`` from the
+                # firmware is always 0, so compute it from the counters:
+                #   rate = HardwareErrors / (HardwareErrors + Diff1Work) * 100
+                hw_err = _opt_float(dev.get("Hardware Errors"))
+                diff1 = _opt_float(dev.get("Diff1 Work"))
+                if hw_err is not None and diff1 is not None:
+                    saw_hw_counters = True
+                    total_hw_errors += hw_err
+                    total_diff1_work += diff1
+                    denom = hw_err + diff1
+                    bs.hw_error_rate = round((hw_err / denom) * 100, 2) if denom > 0 else 0.0
+
                 sample.boards.append(bs)
 
             # --- Aggregate counts ---
@@ -619,6 +655,13 @@ class LuxosDriver(MinerDriver):
             # dashboard), otherwise keep the board count for parity
             # with the previous behaviour.
             sample.asic_count = sample.chip_count or sample.board_count
+
+            # Fleet-wide HW error rate from the accumulated counters.
+            if saw_hw_counters:
+                denom = total_hw_errors + total_diff1_work
+                sample.hw_error_rate = (
+                    round((total_hw_errors / denom) * 100, 2) if denom > 0 else 0.0
+                )
 
             # Promote per-board freq/voltage into the legacy aggregate
             # fields when the existing reads didn't populate them. This
@@ -705,6 +748,31 @@ def _format_mac(raw: str) -> str:
     return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
 
 
+# Best-effort ASIC chip-model lookup. LuxOS exposes no chip-model field
+# anywhere in its API (checked version/devs/stats), so — like the AxeOS
+# tools that print "BM1370" for an S21 — we map the miner model name to
+# its known ASIC. Rules are checked most-specific-first; unknown models
+# return None so the UI shows nothing rather than a wrong chip.
+_CHIP_MODEL_RULES: list[tuple[tuple[str, ...], str]] = [
+    (("s21", "t21"), "BM1370"),
+    (("s19 xp", "s19j xp", "t19 xp", "s19k"), "BM1366"),
+    (("s19j pro", "s19a", "s19j"), "BM1362"),
+    (("s19", "s19 pro", "t19"), "BM1397"),
+    (("s9",), "BM1387"),
+]
+
+
+def _chip_model_for(model: str | None) -> str | None:
+    """Map a miner model name (e.g. "Antminer S21") to its ASIC ("BM1370")."""
+    if not model:
+        return None
+    m = model.lower()
+    for needles, chip in _CHIP_MODEL_RULES:
+        if any(n in m for n in needles):
+            return chip
+    return None
+
+
 # Sensor positions used by the LuxOS ``temps`` extension. Each TEMPS
 # entry can carry up to four readings keyed by these names; METADATA
 # carries the human-readable label (e.g. "Board Outlet") that goes
@@ -742,24 +810,45 @@ def _temps_metadata_labels(temps: dict[str, Any]) -> dict[str, str]:
 def _parse_frequency_response(resp: dict[str, Any] | None, board_id: int) -> float | None:
     """Pull the average operating frequency (MHz) out of a ``frequencyget`` reply.
 
-    LuxOS builds vary: some return a single ``FREQUENCY`` entry with a
-    board-wide value, others return a per-chip list. We tolerate both
-    by looking for the most natural keys first and falling back to
-    averaging whatever per-chip numbers we find.
+    The real LuxOS shape (per docs.luxor.tech firmware/api/luxminer/
+    frequencyget) puts the per-chip values inside a ``Freqs`` array::
+
+        {"FREQS": [{"Count": 63, "Freqs": [650, 650, 650, ...]}]}
+
+    The previous implementation only looked for a scalar ``Frequency``/
+    ``AvgFrequency`` key, which never exists in this payload — so it
+    always returned None and the per-board "Current frequency" tile
+    showed "—". We now average the ``Freqs`` array first, then fall back
+    to the older scalar / per-chip-object shapes for resilience.
     """
     if not resp:
         return None
-    f_list = _arr(resp, "FREQUENCY") or _arr(resp, "FREQ") or _arr(resp, "FREQS")
+    f_list = _arr(resp, "FREQS") or _arr(resp, "FREQUENCY") or _arr(resp, "FREQ")
     if not f_list:
         return None
-    # Single-entry, board-wide shape.
+
+    # Primary shape: each entry carries a ``Freqs`` array of per-chip
+    # frequencies (single chip → 1-element array, whole board → N).
+    chip_vals: list[float] = []
+    for entry in f_list:
+        freqs = entry.get("Freqs")
+        if isinstance(freqs, list):
+            for fv in freqs:
+                v = _opt_float(fv)
+                if v is not None and v > 0:
+                    chip_vals.append(v)
+    if chip_vals:
+        return round(sum(chip_vals) / len(chip_vals), 1)
+
+    # Fallback A: a single board-wide scalar under a known key.
     if len(f_list) == 1:
         only = f_list[0]
         for key in ("Frequency", "AvgFrequency", "Avg Frequency", "Avg", "Value"):
             v = _opt_float(only.get(key))
             if v is not None:
                 return round(v, 1)
-    # Per-chip list: average the frequencies we can parse.
+
+    # Fallback B: a per-chip list keyed by a scalar ``Frequency`` field.
     vals: list[float] = []
     for entry in f_list:
         # Filter to chips on this board when the field is present.
