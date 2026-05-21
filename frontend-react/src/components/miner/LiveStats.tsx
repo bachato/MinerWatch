@@ -143,11 +143,16 @@ export function LiveStats({ data }: Props) {
       });
     });
   } else {
-    // On NerdOctaxe rename "Fan" → "Fan 1" so the pair "Fan 1 / Fan 2"
-    // reads as a unit. On single-fan miners we keep the original label.
-    const primaryFanLabel = isNerdOctaxe && fanRpm2 !== null ? 'Fan 1' : 'Fan';
+    // On NerdOctaxe the two fans sit on different connectors: the primary
+    // fan (`fanrpm`) is the CPU/ASIC fan on connector C2 (lower) and the
+    // secondary fan (`fanrpm2`) is the Aux/VRM fan on connector C1 (upper).
+    // Label them by role + connector so they read clearly. On single-fan
+    // miners we keep the original generic label.
+    const isNerdOctaxeDualFan = isNerdOctaxe && fanRpm2 !== null;
+    const primaryFanLabel = isNerdOctaxeDualFan ? 'CPU fan (C2 lower)' : 'Fan';
     rows.push({
       label: primaryFanLabel,
+      title: isNerdOctaxeDualFan ? 'Connector: C2 (lower)' : undefined,
       value: (
         <NumberCell
           value={fanRpm !== null && fanRpm !== undefined ? String(fanRpm) : '—'}
@@ -155,10 +160,11 @@ export function LiveStats({ data }: Props) {
         />
       ),
     });
-    // NerdOctaxe second fan (only when populated).
+    // NerdOctaxe second fan (only when populated) — Aux/VRM fan on C1 (upper).
     if (fanRpm2 !== null && fanRpm2 !== undefined) {
       rows.push({
-        label: 'Fan 2',
+        label: 'Aux/VRM fan (C1 upper)',
+        title: 'Connector: C1 (upper)',
         value: (
           <NumberCell
             value={String(fanRpm2)}
