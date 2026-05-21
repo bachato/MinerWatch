@@ -64,6 +64,7 @@ export function LiveSharesCard({ miners }: Props) {
     selectedId != null && axeMiners.some((m) => m.id === selectedId)
       ? selectedId
       : axeMiners[0]?.id ?? null;
+  const activeMiner = axeMiners.find((m) => m.id === activeId) ?? null;
 
   const { events, stats, connected } = useLiveShares(activeId ?? undefined);
   const { data: notable } = useMinerNotableShares(activeId ?? undefined, 15);
@@ -154,7 +155,7 @@ export function LiveSharesCard({ miners }: Props) {
           </div>
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              Live shares
+              {activeMiner?.name ?? 'Live shares'}
               <span
                 className={
                   'inline-flex items-center gap-1 text-[11px] font-normal ' +
@@ -169,9 +170,7 @@ export function LiveSharesCard({ miners }: Props) {
                 {connected ? 'Live' : 'Connecting…'}
               </span>
             </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Every share as it happens, straight from the miner's log
-            </p>
+            <p className="text-xs text-muted-foreground">Per-share stream from the miner log</p>
           </div>
         </div>
         <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
