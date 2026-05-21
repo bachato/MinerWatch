@@ -174,7 +174,7 @@ async def auth_middleware(request: Request, call_next):
     # cache is aggressive enough to serve stale content even after the
     # cookie has been set. Static assets keep their own cache policy.
     is_html_page = (
-        path in {"/", "/settings", "/analytics", "/system", "/update", "/login"}
+        path in {"/", "/settings", "/analytics", "/live", "/system", "/update", "/login"}
         or path.startswith("/miner/")
     )
     if cfg.auth.enabled and is_html_page:

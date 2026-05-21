@@ -9,6 +9,7 @@ import {
   Heart,
   Menu,
   Network,
+  Radio,
   Server,
   Settings as SettingsIcon,
   X,
@@ -80,6 +81,13 @@ function NavList({ onNavigate, onDonateClick, updateAvailable }: NavListProps) {
       label: 'Analytics',
       icon: BarChart3,
       description: 'Predictions & records',
+    },
+    {
+      kind: 'link',
+      to: '/live',
+      label: 'Live shares',
+      icon: Radio,
+      description: 'Real-time per-share stream',
     },
     {
       kind: 'link',

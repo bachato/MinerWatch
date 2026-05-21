@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router-dom';
 import { AppShell } from '@/components/AppShell';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
+import { LiveSharesPage } from '@/pages/LiveSharesPage';
 import { MinerPage } from '@/pages/MinerPage';
 import { PoolsPage } from '@/pages/PoolsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -29,6 +30,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
+        <Route path="/live" element={<LiveSharesPage />} />
         <Route path="/pools" element={<PoolsPage />} />
         <Route path="/miner/:id" element={<MinerPage />} />
         <Route path="/settings" element={<SettingsPage />} />

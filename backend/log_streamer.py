@@ -100,8 +100,23 @@ SUBSCRIBER_QUEUE_MAX = 1000
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # "<LEVEL> (<ms_since_boot>) <tag>: <message>"
 _LOG = re.compile(r"^([IWE]) \((\d+)\) ([^:]+): (.*)$")
-# "... diff 3035.4 of 1497." → (share_diff, pool_target)
-_SHARE = re.compile(r"diff ([0-9.]+) of ([0-9.]+)")
+# Share-line difficulty, two firmware dialects:
+#   AxeOS / Bitaxe:  "... diff 3035.4 of 1497."   → "<share> of <target>"
+#   NerdQAxe(++):    "... diff 1394.8/3065/241M"  → "<share>/<target>/<best>"
+# We capture the share difficulty + the pool target from either. The
+# optional SI suffix (k/M/G/T/…) is parsed too, in case a pool runs a
+# high vardiff that the firmware prints in SI form.
+_SHARE = re.compile(r"\bdiff\s+([0-9.]+[kKMGTPE]?)\s*(?:of|/)\s*([0-9.]+[kKMGTPE]?)")
+
+_SI_SUFFIX = {"k": 1e3, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "P": 1e15, "E": 1e18}
+
+
+def _parse_diff_token(tok: str) -> float:
+    """Parse a difficulty token that may carry an SI suffix ("4.29G")."""
+    tok = tok.strip()
+    if tok and tok[-1] in _SI_SUFFIX:
+        return float(tok[:-1]) * _SI_SUFFIX[tok[-1]]
+    return float(tok)
 
 
 @dataclass
@@ -329,8 +344,8 @@ class LogStreamer:
             if not sm:
                 return
             try:
-                share_diff = float(sm.group(1))
-                pool_target = float(sm.group(2))
+                share_diff = _parse_diff_token(sm.group(1))
+                pool_target = _parse_diff_token(sm.group(2))
             except ValueError:
                 return
             try:
@@ -338,7 +353,9 @@ class LogStreamer:
             except ValueError:
                 uptime_ms = 0
             await self._on_result(stream, uptime_ms, share_diff, pool_target)
-        elif tag == "stratum_task":
+        # Bitaxe logs the verdict under tag "stratum_task"; NerdQAxe uses
+        # "stratum task (Pri)" (space + pool marker). Match both dialects.
+        elif tag.startswith("stratum_task") or tag.startswith("stratum task"):
             if "result accepted" in msg:
                 self._on_verdict(stream, accepted=True)
             elif "result rejected" in msg:
