@@ -93,8 +93,21 @@ class BitaxeDriver(MinerDriver):
         if hashrate_ths and power_w and hashrate_ths > 0:
             eff = round(power_w / hashrate_ths, 2)
 
-        # Bitaxe exposes temp (chip) and vrTemp (voltage regulator)
-        temp_chip = _opt_float(data.get("temp"))
+        # Bitaxe exposes temp (chip sensor 1) and vrTemp (voltage
+        # regulator). Multi-ASIC boards like the SupraHex (6× BM1368) add
+        # a second on-board chip sensor as temp2; single-ASIC boards omit
+        # it (or report the firmware's -1 "no sensor" sentinel). We treat
+        # any non-positive reading as absent so the sentinel never poisons
+        # the max() below or surfaces as a bogus 0 °C row.
+        temp_s1 = _valid_temp(_opt_float(data.get("temp")))
+        temp_s2 = _valid_temp(_opt_float(data.get("temp2")))
+        # ``temp_chip_c`` is the hottest chip sensor, matching every other
+        # multi-sensor driver (luxos/braiins/canaan all use max()). This is
+        # the value the overheat alert and the auto-fan PID read, so on a
+        # two-sensor board it must follow the hotter cluster — not sensor 1,
+        # which on the SupraHex can read ~12 °C cooler than sensor 2.
+        _chip_temps = [t for t in (temp_s1, temp_s2) if t is not None]
+        temp_chip = round(max(_chip_temps), 1) if _chip_temps else None
         temp_vr = _opt_float(data.get("vrTemp"))
 
         # Frequenza in MHz, voltage in mV
@@ -170,6 +183,7 @@ class BitaxeDriver(MinerDriver):
             power_w=power_w,
             efficiency_w_per_ths=eff,
             temp_chip_c=temp_chip,
+            temp_chip_2_c=temp_s2,
             temp_vr_c=temp_vr,
             fan_rpm=fan_rpm,
             fan_pct=fan_pct,
@@ -291,6 +305,20 @@ def _opt_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _valid_temp(value: float | None) -> float | None:
+    """Drop the firmware's "sensor absent" sentinel.
+
+    AxeOS reports an unpopulated temperature sensor as ``-1`` (seen on
+    ``boardTemp`` and on the second chip sensor of single-sensor boards).
+    A genuine chip reading is always a positive Celsius value, so we treat
+    anything ``<= 0`` as missing — this keeps the sentinel out of the
+    ``max()`` aggregation and prevents a phantom "0 °C" row in the UI.
+    """
+    if value is None or value <= 0:
+        return None
+    return value
 
 
 def _opt_int(value: Any) -> int | None:

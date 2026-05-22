@@ -174,7 +174,19 @@ class MinerSample:
     efficiency_w_per_ths: float | None = None
 
     # Thermal
+    # ``temp_chip_c`` is the *hottest* chip sensor — every multi-sensor
+    # driver (LuxOS/Braiins/Canaan, and Bitaxe on multi-ASIC boards)
+    # collapses its sensors with max() here, because this is the field the
+    # overheat alert and the auto-fan PID regulate on. It must track the
+    # hottest cluster, not an arbitrary single sensor.
     temp_chip_c: float | None = None
+    # Second chip-temperature sensor, exposed by multi-ASIC AxeOS boards
+    # such as the Bitaxe SupraHex (6× BM1368), which report two on-board
+    # sensors as ``temp`` / ``temp2``. Mirrors the ``fan_rpm_2`` precedent:
+    # a dedicated field for the second physical sensor so the frontend can
+    # show both readings. Stays None on single-sensor devices and on every
+    # driver that doesn't populate it.
+    temp_chip_2_c: float | None = None
     temp_vr_c: float | None = None
     temp_outlet_c: float | None = None  # Avalon/Canaan: OTemp
     temp_inlet_c: float | None = None   # Avalon/Canaan: ITemp (often unavailable)

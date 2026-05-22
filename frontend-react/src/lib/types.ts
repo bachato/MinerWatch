@@ -150,6 +150,10 @@ export interface LiveSample {
   power_w: number | null;
   efficiency_w_per_ths: number | null;
   temp_chip_c: number | null;
+  // Second chip sensor on multi-ASIC AxeOS boards (Bitaxe SupraHex):
+  // the firmware reports `temp`/`temp2` and the backend threads the
+  // second one through here. Null on single-sensor devices.
+  temp_chip_2_c: number | null;
   temp_vr_c: number | null;
   temp_outlet_c: number | null;
   temp_inlet_c: number | null;
