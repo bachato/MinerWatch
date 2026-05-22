@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] — 2026-05-22
+
+### Added
+
+- **Both chip-temperature sensors on multi-ASIC Bitaxe boards**: the
+  Hardware → Thermal section now shows "Chip temp 1" and "Chip temp 2"
+  for boards that expose two on-board sensors (`temp` / `temp2`), such
+  as the Bitaxe SupraHex (6× BM1368). Single-sensor boards are
+  unchanged and keep the "Max chip temp" row.
+
+### Fixed
+
+- **Over-temperature alert and auto-fan now follow the hottest chip
+  sensor** on multi-sensor Bitaxe boards. The driver previously fed only
+  the first sensor (`temp`) into `temp_chip_c`, so the overheat alert
+  and the auto-fan PID could ignore a hotter second cluster — on a
+  SupraHex, sensor 2 can run well above sensor 1. `temp_chip_c` is now
+  the maximum across all valid chip sensors, matching the LuxOS /
+  Braiins / Canaan drivers; the firmware's `-1` "sensor absent" sentinel
+  is excluded.
+
 ## [0.1.0] — 2026-05-10
 
 First public alpha. Local-first dashboard for home Bitcoin miners,
@@ -94,5 +115,6 @@ extensions).
   anything `< 15` to firmware-auto (`-1`).
 - No automated test suite yet — contributions welcome.
 
-[Unreleased]: https://github.com/imlenti/MinerWatch/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/imlenti/MinerWatch/compare/v1.1.6...HEAD
+[1.1.6]: https://github.com/imlenti/MinerWatch/releases/tag/v1.1.6
 [0.1.0]: https://github.com/imlenti/MinerWatch/releases/tag/v0.1.0

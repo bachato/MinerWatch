@@ -127,6 +127,9 @@ export function HardwareCards({ data }: Props) {
 
   // ----- Thermal -----
   const tChip = v('temp_chip_c') as number | null;
+  // Second chip sensor — populated only by multi-ASIC AxeOS boards
+  // (Bitaxe SupraHex). When present we render the two sensors separately.
+  const tChip2 = ls?.temp_chip_2_c ?? null;
   const tVr = v('temp_vr_c') as number | null;
   const tIn = ls?.temp_inlet_c ?? null;
   const tOut = ls?.temp_outlet_c ?? null;
@@ -134,8 +137,25 @@ export function HardwareCards({ data }: Props) {
   const target = miner.auto_target_c ?? (raw.temptarget as number | undefined) ?? null;
   const tempCell = (t: number | null | undefined) =>
     t !== null && t !== undefined ? <TempVal value={t} /> : null;
+  // On a two-sensor board, ``temp_chip_c`` is the *max* of the two sensors
+  // (it's what the alert + auto-fan track), so showing it as "Max chip
+  // temp" would just duplicate the hotter row. Instead we show sensor 1
+  // (the raw ``temp``) and sensor 2 side by side, and drop the "Max" row.
+  // Single-sensor devices keep the familiar "Max chip temp" label, so
+  // nothing changes for Gamma/Supra-class boards with one ASIC.
+  const tChip1raw =
+    raw.temp !== undefined && raw.temp !== null && Number(raw.temp) > 0
+      ? Number(raw.temp)
+      : null;
+  const chipTempRows: Row[] =
+    tChip2 !== null && tChip2 !== undefined
+      ? [
+          { label: 'Chip temp 1', value: tempCell(tChip1raw ?? tChip) },
+          { label: 'Chip temp 2', value: tempCell(tChip2) },
+        ]
+      : [{ label: 'Max chip temp', value: tempCell(tChip) }];
   const thermal: Row[] = [
-    { label: 'Max chip temp', value: tempCell(tChip) },
+    ...chipTempRows,
     { label: 'Average chip temp', value: tempCell(tAvg) },
     { label: miner.family === 'canaan' ? 'Air outlet temp' : 'VR temp', value: tempCell(tVr) },
     { label: 'Air inlet temp', value: tempCell(tIn) },
