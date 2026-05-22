@@ -463,6 +463,76 @@ export interface PushTestResponse {
   subscribers: number;
 }
 
+// ---------- Tuner (efficiency/performance) ----------
+
+export interface TunerProfile {
+  label?: string;
+  target_c: number;
+  fan_cap_pct: number;
+  k_temp?: number;
+  w_fan?: number;
+  m_eff?: number;
+}
+
+export interface TunerSession {
+  id: number;
+  miner_id: number;
+  profile: string;
+  status: 'running' | 'completed' | 'cancelled' | 'error';
+  target_c: number | null;
+  fan_cap_pct: number | null;
+  started_at: number;
+  finished_at: number | null;
+  best_frequency_mhz: number | null;
+  best_voltage_mv: number | null;
+  best_score: number | null;
+  message: string | null;
+  progress: number | null;
+}
+
+export interface TunerLive {
+  session_id?: number;
+  phase?: string;
+  profile?: string;
+  points_done?: number;
+  progress?: number;
+  current?: { frequency_mhz?: number; voltage_mv?: number } | null;
+  message?: string | null;
+}
+
+export interface TunerStatusResponse {
+  enabled: boolean;
+  supported: boolean;
+  running: boolean;
+  live: TunerLive | null;
+  session: TunerSession | null;
+  profiles: Record<string, TunerProfile>;
+}
+
+export interface TunerPoint {
+  id: number;
+  session_id: number;
+  ts: number;
+  frequency_mhz: number | null;
+  voltage_mv: number | null;
+  hashrate_ths: number | null;
+  hashrate_expected_ths: number | null;
+  temp_chip_c: number | null;
+  temp_vr_c: number | null;
+  power_w: number | null;
+  efficiency_j_th: number | null;
+  fan_pct: number | null;
+  hw_errors_delta: number | null;
+  hw_error_pct: number | null;
+  outcome: 'valid' | 'unstable' | 'unsafe' | null;
+  score: number | null;
+}
+
+export interface TunerResultsResponse {
+  session: TunerSession | null;
+  points: TunerPoint[];
+}
+
 // Host metrics surfaced by /api/system/info and /api/system/snapshot.
 // The shapes here mirror backend/system_info.py exactly: when in doubt
 // match the Python keys 1:1 rather than re-flattening, because the

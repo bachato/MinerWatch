@@ -38,6 +38,7 @@ from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
+from .tuner import tuner_controller, SUPPORTED_FAMILIES as TUNER_FAMILIES
 from .log_streamer import log_streamer
 from . import updater
 
@@ -89,6 +90,15 @@ async def on_startup() -> None:
     cfg = get_config()
     await db.init_db()
 
+    # Any tuner session left 'running' by a crash/restart is marked errored
+    # so it can't block new runs on that miner.
+    try:
+        stale = await db.fail_stale_tuner_sessions()
+        if stale:
+            log.info("Marked %d stale tuner session(s) as errored", stale)
+    except Exception:  # noqa: BLE001
+        log.exception("failed to clean up stale tuner sessions")
+
     # Apply any overrides from the settings DB
     overrides = await db.all_settings()
     cfg.apply_overrides(
@@ -138,6 +148,7 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await log_streamer.stop()
+    await tuner_controller.shutdown()
     await auto_fan.stop()
     await poller.stop()
 
@@ -970,6 +981,99 @@ async def api_purge_push_subscriptions() -> dict:
     """
     n = await db.purge_push_subs()
     return {"ok": True, "removed": n}
+
+
+# ---------- API: tuner (efficiency/performance) ----------
+#
+# On-demand sweep of frequency/coreVoltage to find the best pair for a
+# chosen profile (Performance / Eco) under a target temperature. The
+# whole feature is gated behind ``cfg.tuner.enabled``: when off, the
+# write endpoints 404 and the status endpoint reports ``enabled: false``
+# so the SPA hides the tab. See docs/tuner-design.md.
+
+class TunerStartPayload(BaseModel):
+    profile: str = Field(..., description="performance | eco")
+    # The UI shows a risk modal and only sends consent=true once the user
+    # ticks the box. We re-check it server-side: no consent → no run.
+    consent: bool = False
+
+
+def _tuner_session_view(session: dict | None) -> dict | None:
+    """Trim a raw tuner_sessions row to the fields the UI needs."""
+    if not session:
+        return None
+    keep = (
+        "id", "miner_id", "profile", "status", "target_c", "fan_cap_pct",
+        "started_at", "finished_at", "best_frequency_mhz", "best_voltage_mv",
+        "best_score", "message", "progress",
+    )
+    return {k: session.get(k) for k in keep}
+
+
+@app.get("/api/miners/{miner_id}/tuner/status")
+async def api_tuner_status(miner_id: int) -> dict:
+    """Current tuner state for a miner: capability, running flag, last run."""
+    cfg = get_config()
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    family = (miner.get("family") or "").lower()
+    latest = await db.latest_tuner_session(miner_id)
+    return {
+        "enabled": cfg.tuner.enabled,
+        "supported": family in TUNER_FAMILIES,
+        "running": tuner_controller.is_running(miner_id),
+        "live": tuner_controller.progress(miner_id),
+        "session": _tuner_session_view(latest),
+        "profiles": cfg.tuner.profiles,
+    }
+
+
+@app.get("/api/miners/{miner_id}/tuner/results")
+async def api_tuner_results(miner_id: int, session_id: Optional[int] = None) -> dict:
+    """Return a session and its measured points (latest session by default)."""
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    session = (
+        await db.get_tuner_session(session_id)
+        if session_id
+        else await db.latest_tuner_session(miner_id)
+    )
+    if not session or int(session["miner_id"]) != int(miner_id):
+        return {"session": None, "points": []}
+    points = await db.list_tuner_points(int(session["id"]))
+    return {"session": _tuner_session_view(session), "points": points}
+
+
+@app.post("/api/miners/{miner_id}/tuner/start")
+async def api_tuner_start(miner_id: int, payload: TunerStartPayload) -> dict:
+    cfg = get_config()
+    if not cfg.tuner.enabled:
+        raise HTTPException(404, "the tuner feature is disabled")
+    if not payload.consent:
+        raise HTTPException(
+            400, "you must accept the risk before starting a tuning session"
+        )
+    miner = await db.get_miner(miner_id)
+    if not miner:
+        raise HTTPException(404, "miner not found")
+    try:
+        session_id = await tuner_controller.start_session(miner, payload.profile)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"ok": True, "session_id": session_id}
+
+
+@app.post("/api/miners/{miner_id}/tuner/cancel")
+async def api_tuner_cancel(miner_id: int) -> dict:
+    cfg = get_config()
+    if not cfg.tuner.enabled:
+        raise HTTPException(404, "the tuner feature is disabled")
+    cancelled = await tuner_controller.cancel_session(miner_id)
+    return {"ok": True, "cancelled": cancelled}
 
 
 # ---------- API: discovery ----------
