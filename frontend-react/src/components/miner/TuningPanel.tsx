@@ -1,5 +1,13 @@
-import { useState } from 'react';
-import { Flame, Snowflake, Loader2, Trophy, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import {
+  Flame,
+  Snowflake,
+  Loader2,
+  Trophy,
+  X,
+  CheckCircle2,
+  Maximize2,
+} from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,10 +26,45 @@ import {
   useStartTuner,
   useCancelTuner,
 } from '@/api/hooks';
-import type { MinerDetailResponse, TunerPoint, TunerProfile } from '@/lib/types';
+import type {
+  MinerDetailResponse,
+  TunerLive,
+  TunerPoint,
+  TunerProfile,
+  TunerSession,
+} from '@/lib/types';
 
 interface Props {
   data: MinerDetailResponse;
+}
+
+// --- Progress-modal persistence -------------------------------------------
+// The tuning session lives in the backend, independent of the UI, so the
+// modal is just a window onto it. We persist its open state (per miner) in
+// localStorage so a page refresh restores it (decision 2), plus a
+// "completion acknowledged" flag so the success popup reappears once after a
+// background-dismiss (decision 1) but never again after the user clicks OK.
+interface ModalState {
+  sessionId: number;
+  open: boolean;
+  completionAcked: boolean;
+}
+
+function readModalState(minerId: number): ModalState | null {
+  try {
+    const raw = localStorage.getItem(`mw_tuner_modal_${minerId}`);
+    return raw ? (JSON.parse(raw) as ModalState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeModalState(minerId: number, st: ModalState) {
+  try {
+    localStorage.setItem(`mw_tuner_modal_${minerId}`, JSON.stringify(st));
+  } catch {
+    /* ignore quota / privacy-mode errors */
+  }
 }
 
 /**
@@ -30,10 +73,8 @@ interface Props {
  * Sweeps frequency/voltage to find the best pair for a chosen profile
  * (Performance / Eco) under a target temperature, delegating the cooling
  * to MinerWatch's existing auto-fan PID. Clicking a profile opens a
- * mandatory risk-consent modal before anything is sent to the miner.
- *
- * The whole tab self-hides behind the backend feature flag
- * (status.enabled) and the family check (status.supported).
+ * mandatory risk-consent modal; once a session starts, a progress window
+ * tracks it live.
  */
 export function TuningPanel({ data }: Props) {
   const minerId = data.miner.id;
@@ -42,12 +83,47 @@ export function TuningPanel({ data }: Props) {
   const startTuner = useStartTuner(minerId);
   const cancelTuner = useCancelTuner(minerId);
 
-  // The profile awaiting consent (drives the modal). Null = modal closed.
+  // Consent modal state.
   const [pendingProfile, setPendingProfile] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Progress modal state — initial value restored from localStorage so a
+  // refresh re-opens it if it was open (decision 2).
+  const [modalOpen, setModalOpen] = useState<boolean>(
+    () => Boolean(readModalState(minerId)?.open),
+  );
+
   const s = status.data;
+  const session = s?.session ?? null;
+  const running = s?.running ?? false;
+
+  // React to session id / status changes:
+  //  - first time we see a session: open the modal if it's running, and mark
+  //    completion as already-acked if it finished before we started watching
+  //    (so we never announce an old, stale completion);
+  //  - on a live transition to "completed", re-open to announce it (decision
+  //    1) unless the user already acknowledged it.
+  useEffect(() => {
+    if (!session) return;
+    const sid = session.id;
+    const saved = readModalState(minerId);
+    if (!saved || saved.sessionId !== sid) {
+      const isDone = session.status !== 'running';
+      writeModalState(minerId, {
+        sessionId: sid,
+        open: running,
+        completionAcked: isDone,
+      });
+      setModalOpen(running);
+      return;
+    }
+    if (session.status === 'completed' && !saved.completionAcked && !modalOpen) {
+      setModalOpen(true);
+      writeModalState(minerId, { ...saved, open: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.status, running, minerId]);
 
   if (status.isLoading || !s) {
     return (
@@ -80,9 +156,7 @@ export function TuningPanel({ data }: Props) {
     );
   }
 
-  const running = s.running;
   const live = s.live;
-  const session = s.session;
   const profiles = Object.entries(s.profiles ?? {});
 
   function openConsent(key: string) {
@@ -97,6 +171,8 @@ export function TuningPanel({ data }: Props) {
     try {
       await startTuner.mutateAsync({ profile: pendingProfile, consent: true });
       setPendingProfile(null);
+      // The modal opens via the effect once status reports the new running
+      // session (the start mutation invalidates the status query).
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
     }
@@ -109,6 +185,28 @@ export function TuningPanel({ data }: Props) {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
     }
+  }
+
+  // Closing the window (X / Esc / outside / OK). While running this just
+  // hides it and the session keeps going in the background; once the session
+  // is finished, closing also acks the completion so it won't pop up again.
+  function closeModal() {
+    setModalOpen(false);
+    const saved = readModalState(minerId);
+    if (saved) {
+      const finished = session && session.status !== 'running';
+      writeModalState(minerId, {
+        ...saved,
+        open: false,
+        completionAcked: saved.completionAcked || Boolean(finished),
+      });
+    }
+  }
+
+  function reopenModal() {
+    setModalOpen(true);
+    const saved = readModalState(minerId);
+    if (saved) writeModalState(minerId, { ...saved, open: true });
   }
 
   const points = results.data?.points ?? [];
@@ -146,59 +244,26 @@ export function TuningPanel({ data }: Props) {
         </CardContent>
       </Card>
 
-      {/* ---- Running progress ---- */}
-      {running && (
+      {/* ---- Running indicator (persists in the tab even if the window is
+              dismissed); offers to re-open the window. ---- */}
+      {running && !modalOpen && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle className="flex items-center gap-2 text-base">
-              <Loader2 className="h-4 w-4 animate-spin" /> Tuning in progress
+              <Loader2 className="h-4 w-4 animate-spin" /> Tuning running in the
+              background
             </CardTitle>
-            <Button
-              variant="subtle"
-              onClick={onCancel}
-              disabled={cancelTuner.isPending}
-            >
-              <X className="h-4 w-4" /> Stop
+            <Button variant="subtle" onClick={reopenModal}>
+              <Maximize2 className="h-4 w-4" /> Open window
             </Button>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent>
             <ProgressBar value={live?.progress ?? session?.progress ?? 0} />
-            <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-              <span>
-                Phase:{' '}
-                <span className="font-medium text-foreground">
-                  {live?.phase ?? 'starting'}
-                </span>
-              </span>
-              {live?.current?.frequency_mhz != null && (
-                <span>
-                  Testing:{' '}
-                  <span className="font-medium text-foreground tabular-nums">
-                    {live.current.frequency_mhz} MHz
-                    {live.current.voltage_mv != null
-                      ? ` · ${live.current.voltage_mv} mV`
-                      : ''}
-                  </span>
-                </span>
-              )}
-              {typeof live?.points_done === 'number' && (
-                <span>
-                  Points tested:{' '}
-                  <span className="font-medium text-foreground tabular-nums">
-                    {live.points_done}
-                  </span>
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              Keep an eye on your miner. You can stop the run at any time — the
-              tuner will roll the device back to its previous settings.
-            </p>
           </CardContent>
         </Card>
       )}
 
-      {/* ---- Last session results ---- */}
+      {/* ---- Last session results (always available in the tab) ---- */}
       {resultSession && (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -210,16 +275,7 @@ export function TuningPanel({ data }: Props) {
           <CardContent className="space-y-4">
             {resultSession.status === 'completed' &&
               resultSession.best_frequency_mhz != null && (
-                <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">
-                  <Trophy className="h-4 w-4 text-emerald-400" />
-                  <span>
-                    Applied:{' '}
-                    <span className="font-semibold tabular-nums">
-                      {resultSession.best_frequency_mhz} MHz ·{' '}
-                      {resultSession.best_voltage_mv} mV
-                    </span>
-                  </span>
-                </div>
+                <WinnerBadge session={resultSession} />
               )}
             {resultSession.message && (
               <p className="text-xs text-muted-foreground">
@@ -298,11 +354,172 @@ export function TuningPanel({ data }: Props) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ---- Live progress / completion window ---- */}
+      <Dialog
+        open={modalOpen && session !== null}
+        onOpenChange={(open) => {
+          if (!open) closeModal();
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <ProgressModalBody
+            session={session}
+            live={live}
+            points={points}
+            profiles={s.profiles}
+            onStop={onCancel}
+            onClose={closeModal}
+            stopping={cancelTuner.isPending}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
+
+function ProgressModalBody({
+  session,
+  live,
+  points,
+  profiles,
+  onStop,
+  onClose,
+  stopping,
+}: {
+  session: TunerSession | null;
+  live: TunerLive | null;
+  points: TunerPoint[];
+  profiles: Record<string, TunerProfile>;
+  onStop: () => void;
+  onClose: () => void;
+  stopping: boolean;
+}) {
+  if (!session) return null;
+  const profileLabel = labelForProfile(session.profile, profiles);
+
+  // ---- Completed successfully: the "cycle complete" announcement ----
+  if (session.status === 'completed') {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-emerald-400" /> Cycle complete
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <p className="text-muted-foreground">
+            The <span className="font-medium text-foreground">{profileLabel}</span>{' '}
+            tuning cycle finished successfully.
+          </p>
+          {session.best_frequency_mhz != null && <WinnerBadge session={session} />}
+          {session.message && (
+            <p className="text-xs text-muted-foreground">{session.message}</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button onClick={onClose}>OK</Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
+  // ---- Cancelled / error ----
+  if (session.status === 'cancelled' || session.status === 'error') {
+    return (
+      <>
+        <DialogHeader>
+          <DialogTitle>
+            {session.status === 'cancelled' ? 'Tuning stopped' : 'Tuning error'}
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">
+          {session.message ??
+            (session.status === 'cancelled'
+              ? 'The session was stopped and the miner rolled back to its previous settings.'
+              : 'The session ended with an error.')}
+        </p>
+        <DialogFooter>
+          <Button onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </>
+    );
+  }
+
+  // ---- Running ----
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <Loader2 className="h-4 w-4 animate-spin" /> Tuning · {profileLabel}
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-3 text-sm">
+        <ProgressBar value={live?.progress ?? session.progress ?? 0} />
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-muted-foreground">
+          <span>
+            Phase:{' '}
+            <span className="font-medium text-foreground">
+              {live?.phase ?? 'starting'}
+            </span>
+          </span>
+          {live?.current?.frequency_mhz != null && (
+            <span>
+              Testing:{' '}
+              <span className="font-medium text-foreground tabular-nums">
+                {live.current.frequency_mhz} MHz
+                {live.current.voltage_mv != null
+                  ? ` · ${live.current.voltage_mv} mV`
+                  : ''}
+              </span>
+            </span>
+          )}
+          {typeof live?.points_done === 'number' && (
+            <span>
+              Points tested:{' '}
+              <span className="font-medium text-foreground tabular-nums">
+                {live.points_done}
+              </span>
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          You can close this window with the ✕ and the tuning keeps running in
+          the background — it&apos;ll reopen here when the cycle completes. Use{' '}
+          <span className="font-medium text-foreground">Stop</span> only if you
+          want to cancel the run.
+        </p>
+        {points.length > 0 && <PointsTable points={points} session={session} />}
+      </div>
+      <DialogFooter>
+        <Button variant="destructive" onClick={onStop} disabled={stopping}>
+          {stopping ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+          Stop
+        </Button>
+      </DialogFooter>
+    </>
+  );
+}
+
+function WinnerBadge({
+  session,
+}: {
+  session: Pick<TunerSession, 'best_frequency_mhz' | 'best_voltage_mv'>;
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm">
+      <Trophy className="h-4 w-4 text-emerald-400" />
+      <span>
+        Applied:{' '}
+        <span className="font-semibold tabular-nums">
+          {session.best_frequency_mhz} MHz · {session.best_voltage_mv} mV
+        </span>
+      </span>
+    </div>
+  );
+}
 
 function ProfileCard({
   profileKey,
@@ -327,9 +544,7 @@ function ProfileCard({
     >
       <div className="flex items-center gap-2">
         <Icon className={`h-5 w-5 ${tone}`} />
-        <span className="font-semibold">
-          {profile.label ?? profileKey}
-        </span>
+        <span className="font-semibold">{profile.label ?? profileKey}</span>
       </div>
       <div className="text-xs text-muted-foreground tabular-nums">
         Target {profile.target_c}°C · fan up to {profile.fan_cap_pct}%
@@ -351,7 +566,10 @@ function ProgressBar({ value }: { value: number }) {
 }
 
 function SessionStatusBadge({ status }: { status: string }) {
-  const map: Record<string, { tone: 'success' | 'secondary' | 'destructive' | 'outline'; label: string }> = {
+  const map: Record<
+    string,
+    { tone: 'success' | 'secondary' | 'destructive' | 'outline'; label: string }
+  > = {
     completed: { tone: 'success', label: 'Completed' },
     running: { tone: 'secondary', label: 'Running' },
     cancelled: { tone: 'outline', label: 'Cancelled' },
