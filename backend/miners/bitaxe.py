@@ -141,6 +141,23 @@ class BitaxeDriver(MinerDriver):
             pool_url = f"{pool_url}:{data['stratumPort']}"
         worker = data.get("stratumUser")
 
+        # Fallback (secondary) stratum. Modern AxeOS / ESP-Miner exposes a
+        # fallback pool on *all* Bitaxe-class boards — not just the
+        # NerdOctaxe — via ``fallbackStratumURL`` / ``fallbackStratumPort``
+        # / ``fallbackStratumUser``, plus ``isUsingFallbackStratum`` (0/1)
+        # which tells us which slot is *currently* mining.
+        fallback_url = data.get("fallbackStratumURL") or data.get("fallbackStratumUrl")
+        if fallback_url and data.get("fallbackStratumPort"):
+            fallback_url = f"{fallback_url}:{data['fallbackStratumPort']}"
+        worker_fallback = data.get("fallbackStratumUser") or None
+        # Only honour the "using fallback" flag when a fallback endpoint is
+        # actually configured. Guards against firmware that reports the
+        # flag set with no fallback URL, which would otherwise leave the
+        # miner with no slot marked active at all.
+        using_fallback = _coerce_flag(data.get("isUsingFallbackStratum")) and bool(
+            fallback_url
+        )
+
         sample = MinerSample(
             family=self.family,
             host=self.host,
@@ -167,39 +184,67 @@ class BitaxeDriver(MinerDriver):
             network_difficulty=network_diff,
             pool_url=pool_url,
             worker=worker,
+            pool_url_fallback=fallback_url or None,
+            worker_fallback=worker_fallback,
+            pool_active=(
+                ("fallback" if using_fallback else "primary")
+                if (pool_url or fallback_url)
+                else None
+            ),
             raw=data,
         )
 
-        # Synthesise the structured pools list. AxeOS only exposes one
-        # stratum slot (the dual-pool fields are NerdOctaxe-specific —
-        # see :class:`NerdOctaxeDriver`). ``status`` is left None
-        # because AxeOS has no equivalent of cgminer's Alive/Dead flag:
-        # if the miner answered ``/api/system/info`` and we got here,
-        # the pool *for this miner* is at least reachable, but the
-        # frontend decides how to render that (typically "—" or an
-        # implicit health pill derived from accepted vs rejected). The
-        # share counters are fleet-totals — AxeOS doesn't break them
-        # down per slot, so on a Bitaxe accepted/rejected on the only
-        # pool row are simply the miner's totals.
+        # Synthesise the structured pools list. AxeOS exposes a primary
+        # stratum slot and (on modern firmware) a fallback slot; we emit
+        # one ``PoolSnapshot`` per configured slot. ``active`` follows the
+        # firmware's ``isUsingFallbackStratum`` flag so the Pools page
+        # marks whichever pool is *actually* mining — not always the
+        # primary. ``status`` is left None because AxeOS has no equivalent
+        # of cgminer's Alive/Dead flag: if the miner answered
+        # ``/api/system/info`` and we got here, the pool is at least
+        # reachable, and the frontend renders an implicit health pill from
+        # accepted vs rejected.
+        #
+        # The share counters (``sharesAccepted`` / ``sharesRejected``) are
+        # miner-level fleet-totals — AxeOS doesn't break them down per
+        # slot — so we attribute them to whichever slot is currently
+        # active and leave the idle slot's counters None. Zero-ing the
+        # idle slot would falsely imply "0 rejected" when the firmware
+        # simply doesn't report a per-slot breakdown.
         #
         # ``responseTime`` is AxeOS's stratum round-trip latency in ms
-        # (this is the "ping" shown in the AxeOS web UI). It's a single
-        # miner-level value — attributed here to the only pool slot.
+        # (the "ping" shown in the AxeOS web UI). It's a single
+        # miner-level value — attributed here to the active slot only.
         # The NerdQAxe fork reports None here and uses per-pool
         # ``pingRtt`` instead; :class:`NerdOctaxeDriver` overrides this.
         ping_ms = _opt_float(data.get("responseTime"))
+        pools: list[PoolSnapshot] = []
         if pool_url:
-            sample.pools = [
+            primary_active = not using_fallback
+            pools.append(
                 PoolSnapshot(
                     url=pool_url,
                     user=worker,
-                    accepted=accepted,
-                    rejected=rejected,
-                    active=True,
+                    accepted=accepted if primary_active else None,
+                    rejected=rejected if primary_active else None,
+                    active=primary_active,
                     slot="primary",
-                    ping_ms=ping_ms,
+                    ping_ms=ping_ms if primary_active else None,
                 )
-            ]
+            )
+        if fallback_url:
+            pools.append(
+                PoolSnapshot(
+                    url=fallback_url,
+                    user=worker_fallback,
+                    accepted=accepted if using_fallback else None,
+                    rejected=rejected if using_fallback else None,
+                    active=using_fallback,
+                    slot="fallback",
+                    ping_ms=ping_ms if using_fallback else None,
+                )
+            )
+        sample.pools = pools
         return sample
 
     # ---- Controlli ----
@@ -258,3 +303,19 @@ def _opt_int(value: Any) -> int | None:
             return int(float(value))
         except (TypeError, ValueError):
             return None
+
+
+def _coerce_flag(value: Any) -> bool:
+    """Interpret a firmware boolean-ish field as a Python bool.
+
+    AxeOS reports ``isUsingFallbackStratum`` as an int (0/1) on most
+    builds, but we tolerate bool and string forms ("0"/"1"/"true"/…)
+    so the parser survives firmware quirks across versions.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "on")
+    return False
