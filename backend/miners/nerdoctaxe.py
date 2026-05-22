@@ -82,8 +82,16 @@ class NerdOctaxeDriver(BitaxeDriver):
 
         # ---- Hardware errors ---------------------------------------
         # The closest analogue to "chip error rate" in the AxeOS-fork
-        # firmware. Aggregate, not per-chip.
-        sample.hw_errors = _opt_int(data.get("duplicateHWNonces"))
+        # firmware. Aggregate, not per-chip. Prefer `duplicateHWNonces`;
+        # if it's absent, keep the `errorCount` sum the Bitaxe parent
+        # already put in `hw_errors` (so the tuner still has a signal).
+        dh = _opt_int(data.get("duplicateHWNonces"))
+        if dh is not None:
+            sample.hw_errors = dh
+            # duplicateHWNonces has no matching work denominator, so clear
+            # hw_total: a % built from two different counters would be wrong.
+            # The tuner then falls back to the errors-per-minute gate.
+            sample.hw_total = None
 
         # ---- Dual-pool config (read-only) --------------------------
         fb_url = data.get("fallbackStratumURL") or ""

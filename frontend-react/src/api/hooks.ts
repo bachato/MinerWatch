@@ -21,6 +21,8 @@ import type {
   SystemInfo,
   SystemSnapshot,
   TelegramDiscoverResponse,
+  TunerResultsResponse,
+  TunerStatusResponse,
   UpdateCheckResponse,
   UpdateInstallResponse,
   VersionResponse,
@@ -334,6 +336,62 @@ export function useTelegramDiscover() {
 export function useLogout() {
   return useMutation({
     mutationFn: () => api('/api/auth/logout', { method: 'POST' }),
+  });
+}
+
+// ---------- Tuner (efficiency/performance) hooks ----------
+//
+// Status auto-accelerates while a session is running (4 s) and idles
+// otherwise (20 s), using the data already in cache to decide the
+// cadence — no second hook, no chicken-and-egg.
+
+export function useTunerStatus(id: number | undefined) {
+  return useQuery({
+    enabled: Number.isInteger(id),
+    queryKey: ['tuner-status', id],
+    queryFn: ({ signal }) =>
+      api<TunerStatusResponse>(`/api/miners/${id}/tuner/status`, { signal }),
+    refetchInterval: (query) =>
+      query.state.data?.running ? 4_000 : 20_000,
+  });
+}
+
+export function useTunerResults(id: number | undefined) {
+  return useQuery({
+    enabled: Number.isInteger(id),
+    queryKey: ['tuner-results', id],
+    queryFn: ({ signal }) =>
+      api<TunerResultsResponse>(`/api/miners/${id}/tuner/results`, { signal }),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useStartTuner(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { profile: string; consent: boolean }) =>
+      api<{ ok: true; session_id: number }>(
+        `/api/miners/${minerId}/tuner/start`,
+        { method: 'POST', body: payload },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tuner-status', minerId] });
+      qc.invalidateQueries({ queryKey: ['tuner-results', minerId] });
+    },
+  });
+}
+
+export function useCancelTuner(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: true; cancelled: boolean }>(
+        `/api/miners/${minerId}/tuner/cancel`,
+        { method: 'POST' },
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tuner-status', minerId] });
+    },
   });
 }
 
