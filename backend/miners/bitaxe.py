@@ -117,6 +117,22 @@ class BitaxeDriver(MinerDriver):
         fan_rpm = _opt_int(data.get("fanrpm"))
         fan_pct = _opt_float(data.get("fanspeed"))
 
+        # ASIC count. Modern AxeOS reports it directly as ``asicCount`` in
+        # /api/system/info, and that stays the authoritative source. But
+        # some firmware/board combinations omit it from the live-info
+        # endpoint (the Gamma in the field report exposes it only via the
+        # separate /api/system/asic identity endpoint), which left the UI
+        # showing "—". When it's missing we fall back to the per-ASIC
+        # ``hashrateMonitor.asics`` array, whose length is the physical
+        # ASIC count: a single-ASIC Gamma reports one entry, a 6× BM1368
+        # SupraHex reports six. This mirrors how the canaan/braiins/luxos
+        # drivers derive their counts from a per-unit array length. We only
+        # ever use it as a fallback, so an explicit ``asicCount`` always
+        # wins if the firmware does report one.
+        asic_count = _opt_int(data.get("asicCount"))
+        if asic_count is None:
+            asic_count = _asics_from_monitor(data)
+
         accepted = _opt_int(data.get("sharesAccepted"))
         rejected = _opt_int(data.get("sharesRejected"))
         # AxeOS exposes both:
@@ -189,7 +205,7 @@ class BitaxeDriver(MinerDriver):
             fan_pct=fan_pct,
             frequency_mhz=freq_mhz,
             voltage_mv=voltage_mv,
-            asic_count=_opt_int(data.get("asicCount")),
+            asic_count=asic_count,
             uptime_s=_opt_int(data.get("uptimeSeconds")),
             accepted=accepted,
             rejected=rejected,
@@ -305,6 +321,31 @@ def _opt_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _asics_from_monitor(data: dict[str, Any]) -> int | None:
+    """Derive the ASIC count from the ``hashrateMonitor.asics`` array.
+
+    AxeOS's ``hashrateMonitor`` block carries one entry per physical ASIC,
+    each with its own ``total`` / ``domains`` / ``errorCount`` (the inner
+    ``domains`` array is the per-chip voltage/hash domains, *not* a chip
+    count — don't confuse the two). The length of the outer ``asics`` list
+    is therefore the physical ASIC count.
+
+    Returns None — never 0 — when the block is absent (older firmware),
+    malformed, or an empty list, so the caller leaves ``asic_count`` unset
+    and the UI keeps showing "—" instead of a misleading "0". The block's
+    shape drifts across firmware versions (e.g. the Gamma omits the
+    per-entry ``frequency`` the SupraHex includes), so we validate types
+    defensively and only count list membership.
+    """
+    monitor = data.get("hashrateMonitor")
+    if not isinstance(monitor, dict):
+        return None
+    asics = monitor.get("asics")
+    if not isinstance(asics, list) or not asics:
+        return None
+    return len(asics)
 
 
 def _valid_temp(value: float | None) -> float | None:
