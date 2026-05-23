@@ -369,7 +369,11 @@ export function useTunerResults(id: number | undefined) {
 export function useStartTuner(minerId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: { profile: string; consent: boolean }) =>
+    mutationFn: (payload: {
+      profile: string;
+      consent: boolean;
+      start_frequency?: number;
+    }) =>
       api<{ ok: true; session_id: number }>(
         `/api/miners/${minerId}/tuner/start`,
         { method: 'POST', body: payload },

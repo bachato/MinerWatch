@@ -996,6 +996,10 @@ class TunerStartPayload(BaseModel):
     # The UI shows a risk modal and only sends consent=true once the user
     # ticks the box. We re-check it server-side: no consent → no run.
     consent: bool = False
+    # Optional advanced override: where the frequency sweep starts (MHz).
+    # When omitted, the per-profile default (current ± offset) is used. The
+    # backend clamps it to the device-valid range.
+    start_frequency: Optional[int] = Field(default=None, ge=100, le=2000)
 
 
 def _tuner_session_view(session: dict | None) -> dict | None:
@@ -1059,7 +1063,9 @@ async def api_tuner_start(miner_id: int, payload: TunerStartPayload) -> dict:
     if not miner:
         raise HTTPException(404, "miner not found")
     try:
-        session_id = await tuner_controller.start_session(miner, payload.profile)
+        session_id = await tuner_controller.start_session(
+            miner, payload.profile, start_frequency=payload.start_frequency
+        )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
