@@ -451,6 +451,33 @@ def parse_cgminer_pool_entry(entry: dict[str, Any]) -> PoolSnapshot:
     )
 
 
+def assign_cgminer_pool_slots(pools: list[PoolSnapshot]) -> None:
+    """Tag cgminer-family pools with ``"primary"`` / ``"fallback"`` slots.
+
+    The cgminer ``pools`` reply has no explicit primary/fallback flag the
+    way AxeOS does — it only carries ``Priority`` (lower = more preferred,
+    primary = the lowest). :func:`parse_cgminer_pool_entry` therefore can't
+    fill ``slot`` on its own (it sees one entry at a time), so it leaves it
+    ``None``. That left every Braiins/Canaan pool untagged, so the
+    fleet-wide Pools page — which keys its "Fallback" filter and badge off
+    ``slot == "fallback"`` — never recognised their backup pools (whereas
+    the Bitaxe/NerdOctaxe drivers set ``slot`` directly and worked fine).
+
+    Callers pass the list **already sorted by priority** (both cgminer
+    drivers sort before calling this). We tag the most-preferred slot
+    ``"primary"`` and every remaining slot ``"fallback"``. This is
+    deliberately position-based rather than ``priority == 0`` so it stays
+    correct on firmwares whose priorities aren't zero-based.
+
+    Mutates ``pools`` in place. ``slot`` is independent of ``active``: a
+    miner that has failed over to its backup still has that pool tagged
+    ``"fallback"`` (the frontend shows it under both Active and Fallback).
+    No-op for an empty list.
+    """
+    for i, pool in enumerate(pools):
+        pool.slot = "primary" if i == 0 else "fallback"
+
+
 class MinerDriver:
     """Base class. Subclasses must override ``DEFAULT_PORT`` and ``poll``."""
 

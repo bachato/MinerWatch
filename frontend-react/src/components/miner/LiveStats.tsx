@@ -162,12 +162,17 @@ export function LiveStats({ data }: Props) {
     });
     // NerdOctaxe second fan (only when populated) — Aux/VRM fan on C1 (upper).
     if (fanRpm2 !== null && fanRpm2 !== undefined) {
+      // The C1/upper header is PWM-driven (firmware reports `fanspeed2`)
+      // but often has no tachometer feedback, so `fanrpm2` comes back as
+      // 0. That 0 is "no RPM reading", not "fan stopped" — render it as
+      // "—" so it reads as missing data rather than a stalled fan, while
+      // still showing the duty-cycle %.
       rows.push({
         label: 'Aux/VRM fan (C1 upper)',
         title: 'Connector: C1 (upper)',
         value: (
           <NumberCell
-            value={String(fanRpm2)}
+            value={fanRpm2 ? String(fanRpm2) : '—'}
             unit={`rpm${fanPct2 !== null && fanPct2 !== undefined ? ` · ${fmtNum(fanPct2, 0)}%` : ''}`}
           />
         ),
