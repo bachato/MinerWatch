@@ -82,10 +82,17 @@ class TunerController:
     def progress(self, miner_id: int) -> dict[str, Any] | None:
         return self._progress.get(int(miner_id))
 
-    async def start_session(self, miner: dict[str, Any], profile_key: str) -> int:
+    async def start_session(
+        self,
+        miner: dict[str, Any],
+        profile_key: str,
+        start_frequency: int | None = None,
+    ) -> int:
         """Validate, snapshot baseline, create the DB session, launch the run.
 
-        Returns the new session id. Raises ValueError on bad input and
+        ``start_frequency`` is an optional advanced override for where the
+        sweep begins; when None the per-profile default (current ± offset) is
+        used. Returns the new session id. Raises ValueError on bad input and
         RuntimeError if a session is already running for this miner.
         """
         cfg = get_config()
@@ -148,7 +155,7 @@ class TunerController:
             "message": None,
         }
         self._tasks[miner_id] = asyncio.create_task(
-            self._run_session(miner, profile_key, profile, session_id),
+            self._run_session(miner, profile_key, profile, session_id, start_frequency),
             name=f"minerwatch-tuner-{miner_id}",
         )
         log.info(
@@ -189,6 +196,7 @@ class TunerController:
         profile_key: str,
         profile: dict[str, Any],
         session_id: int,
+        start_frequency: int | None = None,
     ) -> None:
         miner_id = int(miner["id"])
         cfg = get_config()
@@ -222,10 +230,35 @@ class TunerController:
                 fan_max_override=fan_cap,
             )
 
-            # --- Search space (clamped to config; device ranges best-effort) ---
-            freq_lo, freq_hi = await self._resolve_freq_range(drv, tcfg)
+            # --- Current (stock) settings = the starting anchor ----------
+            current_freq = (
+                int(base.frequency_mhz) if base.frequency_mhz
+                else int(tcfg.frequency_floor_mhz)
+            )
+            current_volt = (
+                int(base.voltage_mv) if base.voltage_mv
+                else int(tcfg.voltage_floor_mv)
+            )
+
+            # --- Search space --------------------------------------------
+            dev_lo, dev_hi = await self._resolve_freq_range(drv, tcfg)
             volt_lo = int(tcfg.voltage_floor_mv)
             volt_hi = int(tcfg.voltage_ceiling_mv)
+            f_off = int(profile.get("start_freq_offset_mhz", 0))
+            v_off = int(profile.get("start_volt_offset_mv", 0))
+            # Start frequency: user override if given, else current + profile
+            # offset, clamped to the device-valid range. The ceiling stays the
+            # config/device guardrail and is NOT user-settable.
+            if start_frequency:
+                start_freq = int(_clamp(int(start_frequency), dev_lo, dev_hi))
+            else:
+                start_freq = int(_clamp(current_freq + f_off, dev_lo, dev_hi))
+            freq_hi = dev_hi
+            # First Vmin-search voltage: current + profile offset, clamped.
+            # Deliberately on the low side so the upward search finds the
+            # true minimum instead of validating immediately at too-high mV.
+            v_start = int(_clamp(current_volt + v_off, volt_lo, volt_hi))
+
             settle_max = (
                 tcfg.settle_max_s_nerdoctaxe
                 if (miner.get("family") or "").lower() == "nerdoctaxe"
@@ -237,42 +270,41 @@ class TunerController:
                 else tcfg.power_ceiling_bitaxe_w
             )
 
-            freqs = list(range(freq_lo, freq_hi + 1, int(tcfg.frequency_step_mhz)))
+            log.info(
+                "tuner: session %s sweep from %s MHz (start_volt %s mV) up to %s MHz",
+                session_id, start_freq, v_start, freq_hi,
+            )
+
+            freqs = list(range(start_freq, freq_hi + 1, int(tcfg.frequency_step_mhz)))
             total_steps = max(1, min(len(freqs), int(tcfg.max_points)))
 
-            # Vmin tends to rise with frequency, so each frequency starts
-            # its voltage ladder from the previous winner's voltage.
-            v_start = volt_lo
-            points_done = 0
-
-            for freq in freqs:
+            freq_done = 0
+            for freq_index, freq in enumerate(freqs):
                 if cancel.is_set():
                     status, message = "cancelled", "cancelled by user"
                     break
-                if points_done >= int(tcfg.max_points):
+                if freq_done >= int(tcfg.max_points):
                     message = "reached the max number of test points"
                     break
 
                 self._set_phase(
                     miner_id, session_id, "sweeping",
-                    current={"frequency_mhz": freq},
-                    progress=points_done / total_steps,
+                    current={"frequency_mhz": freq, "voltage_mv": v_start},
+                    progress=freq_done / total_steps,
                 )
 
+                # _find_vmin_point measures + persists each probed point and
+                # returns the full-window keeper for the winner selection.
                 outcome, point = await self._find_vmin_point(
                     drv, cancel, freq, v_start, volt_hi,
                     tcfg, target_c, fan_cap, settle_max, power_ceiling,
-                    ths_per_mhz,
+                    ths_per_mhz, miner_id, session_id, freq_index, total_steps,
                 )
                 if outcome == "cancelled":
                     status, message = "cancelled", "cancelled by user"
                     break
 
-                points_done += 1
-
-                if point is not None:
-                    point["ts"] = db.now_ts()
-                    await db.insert_tuner_point(session_id, point)
+                freq_done += 1
 
                 if outcome == "valid" and point is not None:
                     valid_points.append(point)
@@ -359,41 +391,94 @@ class TunerController:
         settle_max: int,
         power_ceiling: float,
         ths_per_mhz: float | None,
+        miner_id: int,
+        session_id: int,
+        freq_index: int,
+        total_steps: int,
     ) -> tuple[str, dict[str, Any] | None]:
         """Find the minimum stable+safe voltage at ``freq``.
 
+        Each voltage step is first measured with a SHORT probe (instability
+        shows up in the error rate within seconds); only the chosen voltage
+        gets a full-window measurement for accurate hashrate/efficiency. Every
+        measured point is persisted so the live window fills in as we go.
+
         Returns ``(outcome, point)`` where outcome is one of
         ``valid`` / ``unstable`` / ``unsafe`` / ``cancelled``. ``point`` is
-        the measured record for the chosen (or last-tried) voltage.
+        the full-window keeper for a valid result, else the last-tried point.
         """
         step = int(tcfg.voltage_step_mv)
         last_point: dict[str, Any] | None = None
         volt = int(_clamp(v_start, tcfg.voltage_floor_mv, v_hi))
         probes = 0
-        max_probes = 25  # finer 10 mV steps → allow a wider voltage ladder
+        max_probes = 40  # finer 10 mV steps → allow a wide voltage ladder
 
         while volt <= v_hi and probes < max_probes:
             if cancel.is_set():
                 return "cancelled", last_point
             probes += 1
-            point = await self._measure_point(
-                drv, cancel, freq, volt, tcfg, target_c, fan_cap,
-                settle_max, power_ceiling, ths_per_mhz,
-            )
-            if point is None:  # cancelled mid-measure
-                return "cancelled", last_point
-            last_point = point
+            self._bump_probe(miner_id, session_id, freq, volt, freq_index, total_steps)
 
-            if point["outcome"] == "unsafe":
-                # Even this voltage is too hot/power-hungry at this freq.
-                return "unsafe", point
-            if point["outcome"] == "valid":
-                return "valid", point
-            # unstable → not enough voltage yet, step up.
+            quick = await self._measure_point(
+                drv, cancel, freq, volt, tcfg, target_c, fan_cap,
+                settle_max, power_ceiling, ths_per_mhz, quick=True,
+            )
+            if quick is None:  # cancelled mid-measure
+                return "cancelled", last_point
+            last_point = quick
+
+            if quick["outcome"] == "unsafe":
+                await self._save_point(session_id, quick)
+                return "unsafe", quick
+
+            if quick["outcome"] == "valid":
+                # Confirm the candidate with a full-window measurement.
+                full = await self._measure_point(
+                    drv, cancel, freq, volt, tcfg, target_c, fan_cap,
+                    settle_max, power_ceiling, ths_per_mhz, quick=False,
+                )
+                if full is None:
+                    return "cancelled", last_point
+                await self._save_point(session_id, full)
+                last_point = full
+                if full["outcome"] == "valid":
+                    return "valid", full
+                if full["outcome"] == "unsafe":
+                    return "unsafe", full
+                # Full window disagrees with the quick probe → keep climbing.
+                volt += step
+                continue
+
+            # unstable on the quick probe → record the attempt and step up.
+            await self._save_point(session_id, quick)
             volt += step
 
         # Ran out of voltage headroom without stabilising.
         return "unstable", last_point
+
+    async def _save_point(self, session_id: int, point: dict[str, Any]) -> None:
+        """Persist a measured point (best-effort; never fatal to the run)."""
+        try:
+            await db.insert_tuner_point(session_id, {**point, "ts": db.now_ts()})
+        except Exception:  # noqa: BLE001
+            log.warning("tuner: failed to persist point for session %s", session_id)
+
+    def _bump_probe(
+        self, miner_id: int, session_id: int, freq: int, volt: int,
+        freq_index: int, total_steps: int,
+    ) -> None:
+        """Advance the live status on every voltage probe (so the window
+        visibly moves during a per-frequency voltage ladder, not only when
+        the frequency changes)."""
+        prog = self._progress.get(miner_id)
+        if prog is None:
+            prog = {"session_id": session_id}
+            self._progress[miner_id] = prog
+        prog["phase"] = "sweeping"
+        prog["current"] = {"frequency_mhz": freq, "voltage_mv": volt}
+        prog["points_done"] = prog.get("points_done", 0) + 1
+        base = freq_index / max(1, total_steps)
+        prog["progress"] = round(min(0.98, base + 0.02), 3)
 
     async def _measure_point(
         self,
@@ -407,8 +492,27 @@ class TunerController:
         settle_max: int,
         power_ceiling: float,
         ths_per_mhz: float | None,
+        quick: bool = False,
     ) -> dict[str, Any] | None:
-        """Set (freq, volt), let it settle, sample, classify. None if cancelled."""
+        """Set (freq, volt), let it settle, sample, classify. None if cancelled.
+
+        ``quick`` uses a short window (for the Vmin voltage ladder, where the
+        error rate reveals instability fast); the full window is used only for
+        the chosen keeper, for accurate hashrate/temperature/efficiency.
+        """
+        if quick:
+            window_s = int(tcfg.probe_window_s)
+            settle_cap = min(int(settle_max), int(tcfg.probe_settle_max_s))
+            warmup = int(tcfg.probe_warmup_samples)
+            min_samp = int(tcfg.probe_min_samples)
+            trim = 0
+        else:
+            window_s = int(tcfg.sample_window_s)
+            settle_cap = int(settle_max)
+            warmup = int(tcfg.warmup_samples)
+            min_samp = int(tcfg.min_samples)
+            trim = int(tcfg.outlier_trim)
+
         await drv.set_frequency(int(freq))
         await drv.set_voltage(int(volt))
         await drv.restart()
@@ -427,7 +531,7 @@ class TunerController:
         prev_t: float | None = None
         flat = 0
         waited = 0
-        while waited < settle_max:
+        while waited < settle_cap:
             if cancel.is_set():
                 return None
             s = await self._safe_poll(drv)
@@ -457,7 +561,7 @@ class TunerController:
         tot_end: int | None = None
         samples = 0
         window_steps = max(
-            tcfg.min_samples, int(tcfg.sample_window_s // max(1, tcfg.sample_interval_s))
+            min_samp, int(window_s // max(1, tcfg.sample_interval_s))
         )
         for i in range(window_steps):
             if cancel.is_set():
@@ -472,7 +576,7 @@ class TunerController:
                         "tuner: point f=%s v=%s aborted (%s)", freq, volt, breach
                     )
                     return self._point(freq, volt, s, "unsafe", ths_per_mhz)
-                if i >= tcfg.warmup_samples:
+                if i >= warmup:
                     if s.hashrate_ths is not None:
                         hashes.append(float(s.hashrate_ths))
                     if s.temp_chip_c is not None:
@@ -498,7 +602,7 @@ class TunerController:
             if await self._sleep_or_cancel(cancel, tcfg.sample_interval_s):
                 return None
 
-        avg_h = _trimmed_mean(hashes, tcfg.outlier_trim)
+        avg_h = _trimmed_mean(hashes, trim)
         avg_t = sum(temps) / len(temps) if temps else None
         max_vr = max(vrs) if vrs else None
         avg_p = sum(powers) / len(powers) if powers else None

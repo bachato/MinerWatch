@@ -169,6 +169,16 @@ class TunerCfg:
     warmup_samples: int = 6
     outlier_trim: int = 3
 
+    # Quick-probe params: while searching the minimum stable voltage at a
+    # frequency, undervolt instability shows up in the HW error rate within
+    # seconds — so each ladder step uses a SHORT window, and only the chosen
+    # voltage gets one full-window measurement for accurate hashrate/eff.
+    # This makes the per-frequency voltage ladder roughly 4x faster.
+    probe_window_s: int = 90
+    probe_settle_max_s: int = 60
+    probe_warmup_samples: int = 1
+    probe_min_samples: int = 3
+
     profiles: dict = field(
         default_factory=lambda: {
             "performance": {
@@ -178,6 +188,10 @@ class TunerCfg:
                 "k_temp": 0.5,
                 "w_fan": 0.0,
                 "m_eff": 0.2,
+                # Sweep starts here, relative to the miner's CURRENT settings:
+                # Performance begins just below stock and climbs.
+                "start_freq_offset_mhz": -50,
+                "start_volt_offset_mv": -100,
             },
             "eco": {
                 "label": "Eco / Cool",
@@ -186,6 +200,11 @@ class TunerCfg:
                 "k_temp": 2.0,
                 "w_fan": 0.5,
                 "m_eff": 1.0,
+                # Eco explores lower for efficiency, so it starts further
+                # below stock — and its voltage starts lower too, otherwise
+                # it would sit above the (low) Vmin and skip the efficient zone.
+                "start_freq_offset_mhz": -150,
+                "start_volt_offset_mv": -180,
             },
         }
     )

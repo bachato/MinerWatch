@@ -87,6 +87,8 @@ export function TuningPanel({ data }: Props) {
   const [pendingProfile, setPendingProfile] = useState<string | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Advanced override: where the sweep starts (empty = per-profile default).
+  const [startFreq, setStartFreq] = useState('');
 
   // Progress modal state — initial value restored from localStorage so a
   // refresh re-opens it if it was open (decision 2).
@@ -158,6 +160,9 @@ export function TuningPanel({ data }: Props) {
 
   const live = s.live;
   const profiles = Object.entries(s.profiles ?? {});
+  const currentFreq = data.last_metric?.frequency_mhz ?? null;
+  const perfStart = currentFreq != null ? Math.round(currentFreq - 50) : null;
+  const ecoStart = currentFreq != null ? Math.round(currentFreq - 150) : null;
 
   function openConsent(key: string) {
     setError(null);
@@ -168,8 +173,14 @@ export function TuningPanel({ data }: Props) {
   async function confirmStart() {
     if (!pendingProfile) return;
     setError(null);
+    const trimmed = startFreq.trim();
+    const sf = trimmed === '' ? undefined : Number(trimmed);
     try {
-      await startTuner.mutateAsync({ profile: pendingProfile, consent: true });
+      await startTuner.mutateAsync({
+        profile: pendingProfile,
+        consent: true,
+        start_frequency: sf != null && Number.isFinite(sf) ? sf : undefined,
+      });
       setPendingProfile(null);
       // The modal opens via the effect once status reports the new running
       // session (the start mutation invalidates the status query).
@@ -236,6 +247,32 @@ export function TuningPanel({ data }: Props) {
               />
             ))}
           </div>
+
+          <div className="rounded-md border border-border bg-background/30 p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <label htmlFor="tuner-start-freq" className="text-sm font-medium">
+                Advanced · Start frequency (MHz)
+              </label>
+              <input
+                id="tuner-start-freq"
+                type="number"
+                inputMode="numeric"
+                value={startFreq}
+                onChange={(e) => setStartFreq(e.target.value)}
+                placeholder="Auto"
+                disabled={running}
+                className="w-28 rounded-md border border-border bg-background px-2 py-1 text-sm tabular-nums disabled:opacity-50"
+              />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Leave empty to start automatically
+              {perfStart != null && ecoStart != null
+                ? ` (Performance ~${perfStart} MHz, Eco ~${ecoStart} MHz).`
+                : '.'}{' '}
+              The upper limit is fixed by the device for safety.
+            </p>
+          </div>
+
           {error && !pendingProfile && (
             <p className="text-sm text-destructive" role="status">
               {error}
