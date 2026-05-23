@@ -240,9 +240,9 @@ class MinerSample:
     hw_errors: int | None = None
     # Total work counter, summed across ASICs from the AxeOS hashrateMonitor
     # (`total` per ASIC). Paired with `hw_errors` (errorCount) it lets the
-    # tuner compute a real HW error % = errors / total over a window. Only a
-    # *matched* pair is meaningful: drivers that source `hw_errors` from a
-    # different counter (Nerd* `duplicateHWNonces`) must leave this None.
+    # Guardian compute a real HW error % = errors / total over its interval.
+    # Only a *matched* pair is meaningful: drivers that source `hw_errors`
+    # from a different counter (Nerd* `duplicateHWNonces`) must leave this None.
     hw_total: int | None = None
     # Fleet-wide hardware error rate (%), aggregated across all boards.
     # Computed (not read) on LuxOS because its ``Device Hardware%`` field

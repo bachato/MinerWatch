@@ -207,11 +207,11 @@ class BitaxeDriver(MinerDriver):
             voltage_mv=voltage_mv,
             asic_count=asic_count,
             # Aggregate HW-error counter, summed across ASICs from the
-            # hashrateMonitor block. Used by the tuner (v2) as the stability
+            # hashrateMonitor block. Used by the Guardian as a stability
             # signal. NerdOctaxe overrides this with `duplicateHWNonces`.
             hw_errors=_hw_errors_from_monitor(data),
-            # Matched work denominator (`total` per ASIC) so the tuner can
-            # compute a real HW% = errorCount / total over a window.
+            # Matched work denominator (`total` per ASIC) so the Guardian can
+            # compute a real HW% = errorCount / total over an interval.
             hw_total=_hw_total_from_monitor(data),
             uptime_s=_opt_int(data.get("uptimeSeconds")),
             accepted=accepted,
@@ -360,12 +360,12 @@ def _hw_errors_from_monitor(data: dict[str, Any]) -> int | None:
 
     AxeOS's ``hashrateMonitor.asics[]`` carries one entry per physical ASIC,
     each with an ``errorCount`` (invalid nonces returned by that ASIC). The
-    tuner (v2) uses the delta of this monotonic counter over a sampling
-    window as its stability signal — undervolting raises the error rate.
+    Guardian uses the delta of this monotonic counter over its interval as a
+    stability signal — undervolting raises the error rate.
 
     Returns the summed count, or ``None`` when the block is absent (older
-    firmware) or no entry reports ``errorCount`` — so the tuner can fall
-    back to its hashrate-based gate.
+    firmware) or no entry reports ``errorCount`` — so the Guardian's error
+    term simply stays inactive and VR temperature governs alone.
     """
     monitor = data.get("hashrateMonitor")
     if not isinstance(monitor, dict):
@@ -389,13 +389,13 @@ def _hw_total_from_monitor(data: dict[str, Any]) -> int | None:
     """Sum the per-ASIC ``total`` work counter from ``hashrateMonitor``.
 
     This is the denominator paired with :func:`_hw_errors_from_monitor` so the
-    tuner can compute a real HW error % = errorCount / total over a window.
-    Returns None when the block or the field is absent, so the tuner falls
-    back to its errors-per-minute (or hashrate) gate.
+    Guardian can compute a real HW error % = errorCount / total over its
+    interval. Returns None when the block or the field is absent, in which
+    case the Guardian's error term stays inactive (VR temperature governs).
 
     NOTE: the exact semantics of ``total`` should be confirmed against a real
     AxeOS device — if it turns out not to be a monotonic work counter the
-    tuner guards against it (it only uses the % when the delta is positive).
+    Guardian guards against it (it only uses the % when the delta is positive).
     """
     monitor = data.get("hashrateMonitor")
     if not isinstance(monitor, dict):

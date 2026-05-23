@@ -9,6 +9,7 @@ import type {
   BlockFindsResponse,
   DiscoveryResponse,
   FleetHashrateResponse,
+  GuardianStatusResponse,
   MetricsRangeResponse,
   MinerCreatePayload,
   MinerDetailResponse,
@@ -22,8 +23,6 @@ import type {
   SystemInfo,
   SystemSnapshot,
   TelegramDiscoverResponse,
-  TunerResultsResponse,
-  TunerStatusResponse,
   UpdateCheckResponse,
   UpdateInstallResponse,
   VersionResponse,
@@ -340,62 +339,40 @@ export function useLogout() {
   });
 }
 
-// ---------- Tuner (efficiency/performance) hooks ----------
+// ---------- Guardian (runtime frequency governor) hooks ----------
 //
-// Status auto-accelerates while a session is running (4 s) and idles
-// otherwise (20 s), using the data already in cache to decide the
-// cadence — no second hook, no chicken-and-egg.
+// Status carries the live readout the loop publishes each tick. The
+// governor itself runs on a slow cadence (minutes), but we poll the status
+// a bit faster so the panel feels responsive after the user changes a
+// setting; the backend read is cheap (in-memory + one DB row).
 
-export function useTunerStatus(id: number | undefined) {
+export function useGuardianStatus(id: number | undefined) {
   return useQuery({
     enabled: Number.isInteger(id),
-    queryKey: ['tuner-status', id],
+    queryKey: ['guardian-status', id],
     queryFn: ({ signal }) =>
-      api<TunerStatusResponse>(`/api/miners/${id}/tuner/status`, { signal }),
-    refetchInterval: (query) =>
-      query.state.data?.running ? 4_000 : 20_000,
+      api<GuardianStatusResponse>(`/api/miners/${id}/guardian/status`, { signal }),
+    refetchInterval: 15_000,
   });
 }
 
-export function useTunerResults(id: number | undefined) {
-  return useQuery({
-    enabled: Number.isInteger(id),
-    queryKey: ['tuner-results', id],
-    queryFn: ({ signal }) =>
-      api<TunerResultsResponse>(`/api/miners/${id}/tuner/results`, { signal }),
-    refetchInterval: 10_000,
-  });
+interface GuardianConfigPayload {
+  enabled?: boolean;
+  max_freq_mhz?: number;
+  freq_floor_mhz?: number;
 }
 
-export function useStartTuner(minerId: number) {
+export function useSetGuardianConfig(minerId: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (payload: {
-      profile: string;
-      consent: boolean;
-      start_frequency?: number;
-    }) =>
-      api<{ ok: true; session_id: number }>(
-        `/api/miners/${minerId}/tuner/start`,
+    mutationFn: (payload: GuardianConfigPayload) =>
+      api<{ ok: true; max_freq_mhz: number | null }>(
+        `/api/miners/${minerId}/guardian/config`,
         { method: 'POST', body: payload },
       ),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tuner-status', minerId] });
-      qc.invalidateQueries({ queryKey: ['tuner-results', minerId] });
-    },
-  });
-}
-
-export function useCancelTuner(minerId: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: () =>
-      api<{ ok: true; cancelled: boolean }>(
-        `/api/miners/${minerId}/tuner/cancel`,
-        { method: 'POST' },
-      ),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tuner-status', minerId] });
+      qc.invalidateQueries({ queryKey: ['guardian-status', minerId] });
+      qc.invalidateQueries({ queryKey: ['miner', minerId] });
     },
   });
 }

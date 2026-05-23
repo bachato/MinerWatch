@@ -12,6 +12,7 @@ import { HardwareCards } from '@/components/miner/HardwareCards';
 import { Hashboards } from '@/components/miner/Hashboards';
 import { HistoryCharts } from '@/components/miner/HistoryCharts';
 import { FanControls } from '@/components/miner/FanControls';
+import { GuardianPanel } from '@/components/miner/GuardianPanel';
 import { useMiner } from '@/api/hooks';
 
 /**
@@ -22,6 +23,7 @@ import { useMiner } from '@/api/hooks';
  *   - Hardware   · 5 grouped readout cards
  *   - History    · hashrate and temperature charts with range selector
  *   - Controls   · fan slider + AUTO + target temperature
+ *   - Advanced   · Guardian (runtime frequency governor)
  *
  * URL :id is a path-param. We coerce it to a finite integer before
  * passing it to the hooks — the route should never match without one,
@@ -101,10 +103,7 @@ export function MinerPage() {
           <TabsTrigger value="hardware">Hardware</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="controls">Controls</TabsTrigger>
-          {/* "Tuning (Advanced only)" tab intentionally removed from the UI
-              for now — the TuningPanel component and the /tuner API endpoints
-              still exist, they're just not exposed here so users can't reach
-              that flow. Re-add the trigger + content below to restore it. */}
+          <TabsTrigger value="advanced">Advanced</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-0 space-y-4">
@@ -127,6 +126,10 @@ export function MinerPage() {
 
         <TabsContent value="controls" className="mt-0">
           <FanControls data={data} />
+        </TabsContent>
+
+        <TabsContent value="advanced" className="mt-0">
+          <GuardianPanel data={data} />
         </TabsContent>
       </Tabs>
     </div>

@@ -96,118 +96,87 @@ class AuthCfg:
 
 
 @dataclass
-class TunerCfg:
-    """Configuration for the efficiency/performance tuner.
+class GuardianCfg:
+    """Configuration for the Guardian — a runtime frequency governor.
 
-    The tuner is an *opt-out* bolt-on feature: it finds the best
-    frequency/coreVoltage pair for a chosen profile (Performance or Eco)
-    by sweeping settings while the existing server-side auto-fan PID
-    holds the chip at the profile's target temperature. See
-    ``docs/tuner-design.md`` for the full design.
+    The Guardian is a continuous, slow control loop (a twin of the
+    server-side auto-fan PID in ``auto_control.py``, but acting on
+    *frequency* instead of the fan). Per enabled miner it watches the VR
+    temperature and the HW error rate and nudges the ASIC frequency to
+    keep both inside safe bounds, recovering frequency when conditions
+    cool down. It never goes above a per-miner ceiling (``max`` frequency,
+    which defaults to the miner's current frequency). See
+    ``docs/guardian-design.md`` for the full design, including the v2 plan
+    that adds a voltage lever.
 
-    ``enabled`` is the feature flag. Flip it to False to hide the whole
-    feature (the API endpoints 404 and the UI tab disappears) without
-    removing any code.
+    Control loop (v1, frequency-only), evaluated once per ``interval_seconds``:
+      - VR temp  > ``vr_high_c``       → frequency − ``step_down_vr_mhz``
+      - HW err % > ``hw_error_pct_max``→ frequency − ``step_down_err_mhz``
+      - VR temp  < ``vr_low_c``        → frequency + ``step_up_mhz`` (≤ ceiling)
+      - otherwise (deadband)           → hold
+    Downward (safety) actions take priority over the upward recovery, and
+    every result is clamped to [floor, ceiling]. Because AxeOS applies
+    frequency changes live (no reboot needed), the limiting factor is the
+    VR thermal settle time, which is why the cadence — not downtime — is
+    the main safety knob: keep ``interval_seconds`` ≥ the VR response time.
 
-    ``profiles`` is a plain dict (not a nested dataclass) so it can be
-    overridden wholesale from config.yaml without fighting the flat
-    dotted-key override mechanism in :meth:`Config.apply_overrides`.
-    Each profile carries:
-      - ``target_c``    : chip-temp setpoint the auto-fan PID holds
-      - ``fan_cap_pct`` : max fan duty (maps to fan_max_override)
-      - ``k_temp``      : penalty weight for exceeding target
-      - ``w_fan``       : penalty weight for fan noise (fan %)
-      - ``m_eff``       : penalty weight for poor efficiency (J/TH)
-    Values locked with the user: Performance 62 °C / fan 100 %,
-    Eco 58 °C / fan 90 %.
+    These are GLOBAL defaults. The per-miner opt-in (``guardian_enabled``),
+    the ``max`` frequency ceiling (``guardian_max_freq_mhz``) and an
+    optional floor override (``guardian_freq_floor_mhz``) live on the
+    ``miners`` row so each device is governed independently.
+
+    ``enabled`` is the global feature flag. Flip it to False to disable the
+    whole governor (the loop idles, the API endpoints report disabled and
+    the Advanced UI hides the controls) without removing any code.
     """
 
     enabled: bool = True
 
-    # ---- Hard safety cutoffs: abort the current test point if crossed.
-    # These sit BELOW the global 75 °C auto-fan watchdog on purpose, so
-    # the tuner stops before the watchdog ever has to intervene.
-    cutoff_chip_c: float = 67.0
-    cutoff_vr_c: float = 85.0
-    input_voltage_min_mv: int = 4800
-    input_voltage_max_mv: int = 5500
+    # How often the governor re-evaluates each miner. 5 min mirrors the
+    # cadence that works well in practice: long enough for the VR to settle
+    # after a live frequency change before the next decision is taken.
+    interval_seconds: int = 300
 
-    # ---- Per-family PSU power ceilings (W). AxeOS doesn't expose a max,
-    # so these are conservative guards; tune to your own power supply.
-    power_ceiling_bitaxe_w: float = 40.0
-    power_ceiling_nerdoctaxe_w: float = 160.0
+    # ---- Control thresholds (the friend's field-tested values). ----
+    # VR temperature is the primary lever: nothing else in MinerWatch
+    # governs it in a closed loop (the fan PID watches the chip, the
+    # watchdog watches the chip). 65–70 °C is the hysteresis deadband.
+    vr_high_c: float = 70.0           # above → step frequency down
+    vr_low_c: float = 65.0            # below → step frequency up (recover)
+    # HW error % over the interval (errorCount / total work × 100). When the
+    # firmware exposes no usable work denominator (e.g. Nerd* duplicateHW
+    # Nonces) the error term is inactive for v1 and VR governs alone.
+    hw_error_pct_max: float = 1.1
 
-    # ---- Search space (clamped to whatever /api/system/asic reports).
-    voltage_floor_mv: int = 1000
-    voltage_ceiling_mv: int = 1300
-    voltage_step_mv: int = 10
+    # ---- Step sizes (MHz). Asymmetric on purpose: back off fast, ----
+    # recover gently, so the loop settles instead of hunting at the edges.
+    step_down_vr_mhz: int = 20
+    step_down_err_mhz: int = 10
+    step_up_mhz: int = 10
+
+    # Hard frequency floor (MHz): the governor never throttles below this,
+    # so a runaway down-spiral can't drive a miner into uselessness. A
+    # per-miner ``guardian_freq_floor_mhz`` overrides this when set.
     frequency_floor_mhz: int = 400
-    frequency_ceiling_mhz: int = 700
-    frequency_step_mhz: int = 25
-    # v2 stability gate — primary signal: a real HW error PERCENTAGE
-    # (errorCount / total work over the sampling window, ×100). Single value
-    # for both profiles (stability is a safety standard, not a profile
-    # flavour). Default 0.6 % — the level users typically find "satisfying".
-    hw_error_pct_max: float = 0.6
-    # Secondary gate, used when the firmware exposes an error counter but no
-    # usable work denominator (e.g. Nerd* `duplicateHWNonces`): error RATE in
-    # errors/min. Tune from the results table — magnitudes vary by chip.
-    hw_error_rate_max_per_min: float = 5.0
-    # Last-resort gate, used only when no error counter is available at all:
-    # a point is stable if measured hashrate >= this fraction of the per-chip
-    # expected hashrate (auto-calibrated from the baseline).
-    stability_fraction: float = 0.90
-    max_points: int = 40
 
-    # ---- Timing for the "thorough" (Accurata) profile, in seconds.
-    post_restart_wait_s: int = 90
-    settle_max_s_bitaxe: int = 180
-    settle_max_s_nerdoctaxe: int = 480
-    sample_window_s: int = 600
-    sample_interval_s: int = 15
-    min_samples: int = 7
-    warmup_samples: int = 6
-    outlier_trim: int = 3
+    # Minimum seconds between two changes on the same miner. 0 = rely on
+    # ``interval_seconds`` alone (each tick already leaves a full interval
+    # for the VR to respond). Raise it to force extra settle time.
+    cooldown_seconds: int = 0
 
-    # Quick-probe params: while searching the minimum stable voltage at a
-    # frequency, undervolt instability shows up in the HW error rate within
-    # seconds — so each ladder step uses a SHORT window, and only the chosen
-    # voltage gets one full-window measurement for accurate hashrate/eff.
-    # This makes the per-frequency voltage ladder roughly 4x faster.
-    probe_window_s: int = 90
-    probe_settle_max_s: int = 60
-    probe_warmup_samples: int = 1
-    probe_min_samples: int = 3
-
-    profiles: dict = field(
-        default_factory=lambda: {
-            "performance": {
-                "label": "Performance",
-                "target_c": 62.0,
-                "fan_cap_pct": 100,
-                "k_temp": 0.5,
-                "w_fan": 0.0,
-                "m_eff": 0.2,
-                # Sweep starts here, relative to the miner's CURRENT settings:
-                # Performance begins just below stock and climbs.
-                "start_freq_offset_mhz": -50,
-                "start_volt_offset_mv": -100,
-            },
-            "eco": {
-                "label": "Eco / Cool",
-                "target_c": 58.0,
-                "fan_cap_pct": 90,
-                "k_temp": 2.0,
-                "w_fan": 0.5,
-                "m_eff": 1.0,
-                # Eco explores lower for efficiency, so it starts further
-                # below stock — and its voltage starts lower too, otherwise
-                # it would sit above the (low) Vmin and skip the efficient zone.
-                "start_freq_offset_mhz": -150,
-                "start_volt_offset_mv": -180,
-            },
-        }
-    )
+    # ---- v2 (NOT active in v1; documented here for when we wire it). ----
+    # AxeOS applies voltage changes live too, which opens a second lever:
+    #   * respond to sustained HW errors by RAISING coreVoltage (the proper
+    #     fix for undervolt instability) instead of only cutting frequency;
+    #   * when cutting frequency, optionally LOWER coreVoltage in step to
+    #     stay near Vmin and preserve J/TH efficiency.
+    # Auto-raising voltage 24/7 unattended is riskier (more heat/watts,
+    # closer to hardware limits), so it stays out of v1. The knobs below are
+    # placeholders kept inert until v2 reads them. See guardian-design.md §v2.
+    v2_voltage_enabled: bool = False
+    v2_voltage_step_mv: int = 10
+    v2_voltage_ceiling_mv: int = 1300
+    v2_voltage_floor_mv: int = 1000
 
 
 @dataclass
@@ -218,7 +187,7 @@ class Config:
     storage: StorageCfg = field(default_factory=StorageCfg)
     alerts: AlertsCfg = field(default_factory=AlertsCfg)
     auth: AuthCfg = field(default_factory=AuthCfg)
-    tuner: TunerCfg = field(default_factory=TunerCfg)
+    guardian: GuardianCfg = field(default_factory=GuardianCfg)
 
     @classmethod
     def load(cls) -> "Config":
@@ -236,7 +205,7 @@ class Config:
             storage=StorageCfg(**raw.get("storage", {})),
             alerts=AlertsCfg(**raw.get("alerts", {})),
             auth=AuthCfg(**raw.get("auth", {})),
-            tuner=TunerCfg(**raw.get("tuner", {})),
+            guardian=GuardianCfg(**raw.get("guardian", {})),
         )
 
     def apply_overrides(self, overrides: dict[str, Any]) -> None:

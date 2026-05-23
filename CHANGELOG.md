@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] — 2026-05-24
+
+### Added
+
+- **Guardian — a runtime frequency governor** (Bitaxe / Nerd*). A slow,
+  always-on control loop (a twin of the auto-fan PID, but acting on ASIC
+  *frequency* instead of the fan) that adapts to ambient heat. Per enabled
+  miner it watches the VR temperature and the HW error rate and nudges
+  frequency to keep both in bounds, recovering frequency when things cool —
+  never above a per-miner **max frequency** ceiling (default: the current
+  frequency, editable by expert users). It lives under the new miner
+  **Advanced** tab. Because AxeOS applies frequency changes live, there is
+  no reboot/downtime per nudge; the loop runs on a slow cadence (default
+  5 min) sized to the VR's thermal settle time. v1 is frequency-only; a v2
+  that also adjusts voltage is documented in `docs/guardian-design.md`.
+
+### Removed
+
+- **Efficiency/performance Tuner** (Performance / Eco profiles). Replaced by
+  the Guardian above, which addresses day-to-day ambient drift that a static
+  one-shot tuning point can't. The `tuner_sessions` / `tuner_points` tables
+  are dropped automatically on the next start (idempotent migration).
+
 ## [1.1.6] — 2026-05-22
 
 ### Added

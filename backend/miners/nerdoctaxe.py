@@ -84,13 +84,14 @@ class NerdOctaxeDriver(BitaxeDriver):
         # The closest analogue to "chip error rate" in the AxeOS-fork
         # firmware. Aggregate, not per-chip. Prefer `duplicateHWNonces`;
         # if it's absent, keep the `errorCount` sum the Bitaxe parent
-        # already put in `hw_errors` (so the tuner still has a signal).
+        # already put in `hw_errors` (so the Guardian still has a signal).
         dh = _opt_int(data.get("duplicateHWNonces"))
         if dh is not None:
             sample.hw_errors = dh
             # duplicateHWNonces has no matching work denominator, so clear
             # hw_total: a % built from two different counters would be wrong.
-            # The tuner then falls back to the errors-per-minute gate.
+            # With no denominator the Guardian's error term stays inactive on
+            # Nerd* and VR temperature governs alone.
             sample.hw_total = None
 
         # ---- Dual-pool config (read-only) --------------------------

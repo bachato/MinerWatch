@@ -22,6 +22,10 @@ export interface MinerRecord {
   auto_target_c: number | null;
   fan_min_override: number | null;
   fan_max_override: number | null;
+  // Guardian (runtime frequency governor) per-miner settings.
+  guardian_enabled: number | null;          // 0 | 1 (SQLite int)
+  guardian_max_freq_mhz: number | null;      // ceiling ("max frequency")
+  guardian_freq_floor_mhz: number | null;    // optional floor override
   last_status: string | null;
 }
 
@@ -472,74 +476,45 @@ export interface PushTestResponse {
   subscribers: number;
 }
 
-// ---------- Tuner (efficiency/performance) ----------
+// ---------- Guardian (runtime frequency governor) ----------
 
-export interface TunerProfile {
-  label?: string;
-  target_c: number;
-  fan_cap_pct: number;
-  k_temp?: number;
-  w_fan?: number;
-  m_eff?: number;
-}
-
-export interface TunerSession {
-  id: number;
+// Live readout for one miner, published by the Guardian loop each tick.
+// Null when the governor hasn't evaluated this miner yet (e.g. just enabled,
+// or no poll sample available).
+export interface GuardianLive {
   miner_id: number;
-  profile: string;
-  status: 'running' | 'completed' | 'cancelled' | 'error';
-  target_c: number | null;
-  fan_cap_pct: number | null;
-  started_at: number;
-  finished_at: number | null;
-  best_frequency_mhz: number | null;
-  best_voltage_mv: number | null;
-  best_score: number | null;
-  message: string | null;
-  progress: number | null;
-}
-
-export interface TunerLive {
-  session_id?: number;
-  phase?: string;
-  profile?: string;
-  points_done?: number;
-  progress?: number;
-  current?: { frequency_mhz?: number; voltage_mv?: number } | null;
-  message?: string | null;
-}
-
-export interface TunerStatusResponse {
-  enabled: boolean;
-  supported: boolean;
-  running: boolean;
-  live: TunerLive | null;
-  session: TunerSession | null;
-  profiles: Record<string, TunerProfile>;
-}
-
-export interface TunerPoint {
-  id: number;
-  session_id: number;
-  ts: number;
   frequency_mhz: number | null;
-  voltage_mv: number | null;
-  hashrate_ths: number | null;
-  hashrate_expected_ths: number | null;
-  temp_chip_c: number | null;
-  temp_vr_c: number | null;
-  power_w: number | null;
-  efficiency_j_th: number | null;
-  fan_pct: number | null;
-  hw_errors_delta: number | null;
+  ceiling_mhz: number | null;
+  floor_mhz: number | null;
+  vr_temp_c: number | null;
   hw_error_pct: number | null;
-  outcome: 'valid' | 'unstable' | 'unsafe' | null;
-  score: number | null;
+  reason: string;
+  changed: boolean;
+  ts: number;
 }
 
-export interface TunerResultsResponse {
-  session: TunerSession | null;
-  points: TunerPoint[];
+// Global defaults echoed from GuardianCfg so the UI can show the active
+// thresholds/steps without hard-coding them.
+export interface GuardianDefaults {
+  interval_seconds: number;
+  vr_high_c: number;
+  vr_low_c: number;
+  hw_error_pct_max: number;
+  step_down_vr_mhz: number;
+  step_down_err_mhz: number;
+  step_up_mhz: number;
+  frequency_floor_mhz: number;
+}
+
+export interface GuardianStatusResponse {
+  enabled: boolean;        // global feature flag
+  supported: boolean;      // family + capability supports frequency control
+  miner_enabled: boolean;  // per-miner opt-in
+  max_freq_mhz: number | null;
+  freq_floor_mhz: number | null;
+  current_freq_mhz: number | null;
+  defaults: GuardianDefaults;
+  live: GuardianLive | null;
 }
 
 // Host metrics surfaced by /api/system/info and /api/system/snapshot.

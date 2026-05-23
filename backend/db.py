@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS miners (
     auto_target_c   REAL,                 -- target temperature for minerwatch mode
     fan_min_override INTEGER,             -- minimum percent override (default 15)
     fan_max_override INTEGER,             -- maximum percent override (default 100)
+    -- Guardian (runtime frequency governor). Per-miner opt-in + the
+    -- frequency ceiling/floor it operates within. All thresholds/steps
+    -- are global (see GuardianCfg) and only these per-device knobs live here.
+    -- NOTE: keep these comments free of any semicolon — SCHEMA_SQL is split
+    -- statement-by-statement on the semicolon separator.
+    guardian_enabled        INTEGER DEFAULT 0,  -- 0/1 per-miner opt-in
+    guardian_max_freq_mhz   INTEGER,            -- ceiling (defaults to current freq at enable time)
+    guardian_freq_floor_mhz INTEGER,            -- optional floor override (NULL → global default)
     last_seen_ts    INTEGER,
     last_status     TEXT,                 -- online | offline | error
     extra           TEXT,                 -- free-form JSON
@@ -223,64 +231,6 @@ CREATE TABLE IF NOT EXISTS notable_shares (
 
 CREATE INDEX IF NOT EXISTS idx_notable_shares_miner
     ON notable_shares(miner_id, share_difficulty DESC);
-
--- Efficiency/performance tuner — sessions and measured points.
--- Deliberately a SEPARATE pair of tables (not extra columns on `miners`)
--- so the whole feature can be dropped by deleting these two tables plus
--- the tuner module, without ever touching the shared schema. See
--- docs/tuner-design.md, "Principio di reversibilita".
--- NOTE: keep these comments free of any semicolon — SCHEMA_SQL is split
--- statement-by-statement on the semicolon separator.
-CREATE TABLE IF NOT EXISTS tuner_sessions (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    miner_id            INTEGER NOT NULL,
-    profile             TEXT NOT NULL,     -- 'performance' | 'eco'
-    status              TEXT NOT NULL,     -- running | completed | cancelled | error
-    target_c            REAL,
-    fan_cap_pct         INTEGER,
-    started_at          INTEGER NOT NULL,
-    finished_at         INTEGER,
-    -- Snapshot of the miner state BEFORE the run, to restore on abort.
-    orig_frequency_mhz  REAL,
-    orig_voltage_mv     REAL,
-    orig_fan_mode       TEXT,
-    orig_auto_target_c  REAL,
-    orig_fan_min        INTEGER,
-    orig_fan_max        INTEGER,
-    -- Winning pick applied at the end (NULL until chosen).
-    best_frequency_mhz  REAL,
-    best_voltage_mv     REAL,
-    best_score          REAL,
-    message             TEXT,
-    progress            REAL DEFAULT 0,    -- 0..1
-    FOREIGN KEY (miner_id) REFERENCES miners(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_tuner_sessions_miner
-    ON tuner_sessions(miner_id, started_at DESC);
-
-CREATE TABLE IF NOT EXISTS tuner_points (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id              INTEGER NOT NULL,
-    ts                      INTEGER NOT NULL,
-    frequency_mhz           REAL,
-    voltage_mv              REAL,
-    hashrate_ths            REAL,
-    hashrate_expected_ths   REAL,
-    temp_chip_c             REAL,
-    temp_vr_c               REAL,
-    power_w                 REAL,
-    efficiency_j_th         REAL,
-    fan_pct                 REAL,
-    hw_errors_delta         INTEGER,
-    hw_error_pct            REAL,
-    outcome                 TEXT,          -- valid | unstable | unsafe
-    score                   REAL,
-    FOREIGN KEY (session_id) REFERENCES tuner_sessions(id) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_tuner_points_session
-    ON tuner_points(session_id);
 """
 
 
@@ -369,12 +319,26 @@ def _init_db_sync() -> None:
             "ALTER TABLE miners ADD COLUMN auto_target_c REAL",
             "ALTER TABLE miners ADD COLUMN fan_min_override INTEGER",
             "ALTER TABLE miners ADD COLUMN fan_max_override INTEGER",
-            "ALTER TABLE tuner_points ADD COLUMN hw_error_pct REAL",
+            # Guardian (runtime frequency governor) per-miner knobs.
+            "ALTER TABLE miners ADD COLUMN guardian_enabled INTEGER DEFAULT 0",
+            "ALTER TABLE miners ADD COLUMN guardian_max_freq_mhz INTEGER",
+            "ALTER TABLE miners ADD COLUMN guardian_freq_floor_mhz INTEGER",
         ]:
             try:
                 conn.execute(column_def)
             except sqlite3.OperationalError:
                 pass  # column already exists
+
+        # Drop the retired efficiency/performance tuner tables if an older
+        # DB still carries them. Child table first (FK), both idempotent.
+        for drop_stmt in (
+            "DROP TABLE IF EXISTS tuner_points",
+            "DROP TABLE IF EXISTS tuner_sessions",
+        ):
+            try:
+                conn.execute(drop_stmt)
+            except sqlite3.OperationalError:
+                pass
     finally:
         conn.close()
 
@@ -1497,172 +1461,45 @@ async def list_notable_shares(miner_id: int, limit: int = 50) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
-# ---------- Tuner (efficiency/performance) ----------
-# Self-contained accessors for the tuner feature. Kept together and
-# isolated so the whole feature can be lifted out cleanly (see
-# docs/tuner-design.md). Nothing else in the codebase reads these tables.
-
-# Columns the caller is allowed to update on a session. A whitelist keeps
-# `update_tuner_session(**fields)` from being a SQL-injection foothold and
-# documents the mutable surface in one place.
-_TUNER_SESSION_UPDATABLE = (
-    "status",
-    "finished_at",
-    "best_frequency_mhz",
-    "best_voltage_mv",
-    "best_score",
-    "message",
-    "progress",
-)
+# ---------- Guardian (runtime frequency governor) ----------
+# Per-miner knobs for the Guardian live on the `miners` row (so they ride
+# along with get_miner/list_miners' SELECT *). Only the writer needs a
+# dedicated accessor; reads come through the normal miner record. See
+# backend/guardian.py and docs/guardian-design.md.
 
 
-async def create_tuner_session(
+async def set_guardian_config(
     miner_id: int,
-    profile: str,
-    target_c: float | None,
-    fan_cap_pct: int | None,
-    orig: dict[str, Any] | None = None,
-) -> int:
-    """Create a 'running' tuner session and return its id.
+    enabled: bool | None = None,
+    max_freq_mhz: int | None = None,
+    freq_floor_mhz: int | None = None,
+) -> None:
+    """Update the Guardian settings for a miner.
 
-    ``orig`` carries the pre-session miner state to restore on abort:
-    keys ``frequency_mhz``, ``voltage_mv``, ``fan_mode``, ``auto_target_c``,
-    ``fan_min``, ``fan_max`` (all optional).
+    All fields are optional: pass only the ones you want to change, the
+    others are left untouched (COALESCE). ``enabled`` is stored as 0/1.
+
+    Note: COALESCE means a value can't be reset back to NULL here (mirrors
+    set_fan_config). That's intentional — clearing the ceiling/floor isn't a
+    supported operation; the caller sets a concrete value or leaves it.
     """
-    orig = orig or {}
-    async with connect() as conn:
-        cur = await conn.execute(
-            """
-            INSERT INTO tuner_sessions
-              (miner_id, profile, status, target_c, fan_cap_pct, started_at,
-               orig_frequency_mhz, orig_voltage_mv, orig_fan_mode,
-               orig_auto_target_c, orig_fan_min, orig_fan_max, progress)
-            VALUES (?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-            """,
-            (
-                int(miner_id),
-                str(profile),
-                target_c,
-                fan_cap_pct,
-                now_ts(),
-                orig.get("frequency_mhz"),
-                orig.get("voltage_mv"),
-                orig.get("fan_mode"),
-                orig.get("auto_target_c"),
-                orig.get("fan_min"),
-                orig.get("fan_max"),
-            ),
-        )
-        await conn.commit()
-        return int(cur.lastrowid)
-
-
-async def update_tuner_session(session_id: int, **fields: Any) -> None:
-    """Update whitelisted columns on a session. Unknown keys are ignored."""
-    sets = []
-    vals: list[Any] = []
-    for key, value in fields.items():
-        if key not in _TUNER_SESSION_UPDATABLE:
-            continue
-        sets.append(f"{key} = ?")
-        vals.append(value)
-    if not sets:
-        return
-    vals.append(int(session_id))
+    enabled_int = None if enabled is None else (1 if enabled else 0)
     async with connect() as conn:
         await conn.execute(
-            f"UPDATE tuner_sessions SET {', '.join(sets)} WHERE id = ?",
-            tuple(vals),
-        )
-        await conn.commit()
-
-
-async def get_tuner_session(session_id: int) -> dict[str, Any] | None:
-    async with connect() as conn:
-        async with conn.execute(
-            "SELECT * FROM tuner_sessions WHERE id = ?", (int(session_id),)
-        ) as cur:
-            row = await cur.fetchone()
-    return dict(row) if row else None
-
-
-async def get_active_tuner_session(miner_id: int) -> dict[str, Any] | None:
-    """Return the currently-running session for a miner, if any."""
-    async with connect() as conn:
-        async with conn.execute(
-            "SELECT * FROM tuner_sessions WHERE miner_id = ? AND status = 'running' "
-            "ORDER BY started_at DESC LIMIT 1",
-            (int(miner_id),),
-        ) as cur:
-            row = await cur.fetchone()
-    return dict(row) if row else None
-
-
-async def latest_tuner_session(miner_id: int) -> dict[str, Any] | None:
-    """Return the most recent session for a miner regardless of status."""
-    async with connect() as conn:
-        async with conn.execute(
-            "SELECT * FROM tuner_sessions WHERE miner_id = ? "
-            "ORDER BY started_at DESC LIMIT 1",
-            (int(miner_id),),
-        ) as cur:
-            row = await cur.fetchone()
-    return dict(row) if row else None
-
-
-async def insert_tuner_point(session_id: int, point: dict[str, Any]) -> int:
-    async with connect() as conn:
-        cur = await conn.execute(
             """
-            INSERT INTO tuner_points
-              (session_id, ts, frequency_mhz, voltage_mv, hashrate_ths,
-               hashrate_expected_ths, temp_chip_c, temp_vr_c, power_w,
-               efficiency_j_th, fan_pct, hw_errors_delta, hw_error_pct,
-               outcome, score)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            UPDATE miners SET
+              guardian_enabled = COALESCE(?, guardian_enabled),
+              guardian_max_freq_mhz = COALESCE(?, guardian_max_freq_mhz),
+              guardian_freq_floor_mhz = COALESCE(?, guardian_freq_floor_mhz),
+              updated_at = ?
+            WHERE id = ?
             """,
             (
-                int(session_id),
-                point.get("ts") or now_ts(),
-                point.get("frequency_mhz"),
-                point.get("voltage_mv"),
-                point.get("hashrate_ths"),
-                point.get("hashrate_expected_ths"),
-                point.get("temp_chip_c"),
-                point.get("temp_vr_c"),
-                point.get("power_w"),
-                point.get("efficiency_j_th"),
-                point.get("fan_pct"),
-                point.get("hw_errors_delta"),
-                point.get("hw_error_pct"),
-                point.get("outcome"),
-                point.get("score"),
+                enabled_int,
+                max_freq_mhz,
+                freq_floor_mhz,
+                now_ts(),
+                miner_id,
             ),
         )
         await conn.commit()
-        return int(cur.lastrowid)
-
-
-async def list_tuner_points(session_id: int) -> list[dict[str, Any]]:
-    async with connect() as conn:
-        async with conn.execute(
-            "SELECT * FROM tuner_points WHERE session_id = ? ORDER BY id ASC",
-            (int(session_id),),
-        ) as cur:
-            rows = await cur.fetchall()
-    return [dict(r) for r in rows]
-
-
-async def fail_stale_tuner_sessions() -> int:
-    """Mark any 'running' session as errored. Called on startup so a
-    session interrupted by a crash/restart doesn't stay 'running' forever
-    and block new runs on that miner. Returns the number of rows touched.
-    """
-    async with connect() as conn:
-        cur = await conn.execute(
-            "UPDATE tuner_sessions SET status = 'error', finished_at = ?, "
-            "message = 'interrupted by a server restart' WHERE status = 'running'",
-            (now_ts(),),
-        )
-        await conn.commit()
-        return cur.rowcount or 0

@@ -39,7 +39,7 @@ from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
 from .poller import poller
-from .tuner import tuner_controller, SUPPORTED_FAMILIES as TUNER_FAMILIES
+from .guardian import guardian, GUARDIAN_FAMILIES
 from .log_streamer import log_streamer
 from . import updater
 
@@ -91,15 +91,6 @@ async def on_startup() -> None:
     cfg = get_config()
     await db.init_db()
 
-    # Any tuner session left 'running' by a crash/restart is marked errored
-    # so it can't block new runs on that miner.
-    try:
-        stale = await db.fail_stale_tuner_sessions()
-        if stale:
-            log.info("Marked %d stale tuner session(s) as errored", stale)
-    except Exception:  # noqa: BLE001
-        log.exception("failed to clean up stale tuner sessions")
-
     # Apply any overrides from the settings DB
     overrides = await db.all_settings()
     cfg.apply_overrides(
@@ -141,6 +132,9 @@ async def on_startup() -> None:
     log.info("Starting MinerWatch — port %s", cfg.server.port)
     await poller.start()
     await auto_fan.start()
+    # Runtime frequency governor (Guardian). Slow outer loop; per-miner
+    # opt-in. See backend/guardian.py and docs/guardian-design.md.
+    await guardian.start()
     # Live per-share streamer for AxeOS miners. Self-disables if the
     # `websockets` lib is missing; only attaches to bitaxe-family miners.
     await log_streamer.start()
@@ -149,7 +143,7 @@ async def on_startup() -> None:
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
     await log_streamer.stop()
-    await tuner_controller.shutdown()
+    await guardian.stop()
     await auto_fan.stop()
     await poller.stop()
 
@@ -1009,103 +1003,116 @@ async def api_purge_push_subscriptions() -> dict:
     return {"ok": True, "removed": n}
 
 
-# ---------- API: tuner (efficiency/performance) ----------
+# ---------- API: Guardian (runtime frequency governor) ----------
 #
-# On-demand sweep of frequency/coreVoltage to find the best pair for a
-# chosen profile (Performance / Eco) under a target temperature. The
-# whole feature is gated behind ``cfg.tuner.enabled``: when off, the
-# write endpoints 404 and the status endpoint reports ``enabled: false``
-# so the SPA hides the tab. See docs/tuner-design.md.
+# A slow, always-on control loop that nudges ASIC frequency to keep the VR
+# temperature and HW error rate inside safe bounds, never above a per-miner
+# "max frequency" ceiling. Per-miner opt-in; the whole feature is gated
+# behind ``cfg.guardian.enabled``. v1 is frequency-only (a v2 voltage lever
+# is documented in docs/guardian-design.md). Lives next to the auto-fan PID.
 
-class TunerStartPayload(BaseModel):
-    profile: str = Field(..., description="performance | eco")
-    # The UI shows a risk modal and only sends consent=true once the user
-    # ticks the box. We re-check it server-side: no consent → no run.
-    consent: bool = False
-    # Optional advanced override: where the frequency sweep starts (MHz).
-    # When omitted, the per-profile default (current ± offset) is used. The
-    # backend clamps it to the device-valid range.
-    start_frequency: Optional[int] = Field(default=None, ge=100, le=2000)
-
-
-def _tuner_session_view(session: dict | None) -> dict | None:
-    """Trim a raw tuner_sessions row to the fields the UI needs."""
-    if not session:
-        return None
-    keep = (
-        "id", "miner_id", "profile", "status", "target_c", "fan_cap_pct",
-        "started_at", "finished_at", "best_frequency_mhz", "best_voltage_mv",
-        "best_score", "message", "progress",
-    )
-    return {k: session.get(k) for k in keep}
+class GuardianConfigPayload(BaseModel):
+    # Per-miner opt-in. When enabling without a max, the backend defaults the
+    # ceiling to the miner's current frequency (editable afterward).
+    enabled: Optional[bool] = None
+    # The "max frequency" ceiling the governor never exceeds. Editable by the
+    # expert user; defaults to the current frequency on first enable.
+    max_freq_mhz: Optional[int] = Field(default=None, ge=100, le=2000)
+    # Optional floor override; when omitted the global default is used.
+    freq_floor_mhz: Optional[int] = Field(default=None, ge=100, le=2000)
 
 
-@app.get("/api/miners/{miner_id}/tuner/status")
-async def api_tuner_status(miner_id: int) -> dict:
-    """Current tuner state for a miner: capability, running flag, last run."""
+def _miner_current_freq(miner_id: int) -> int | None:
+    """Best-effort current frequency: live poll sample first, else None."""
+    sample = poller.last_results.get(miner_id)
+    if sample and sample.frequency_mhz:
+        try:
+            return int(sample.frequency_mhz)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+@app.get("/api/miners/{miner_id}/guardian/status")
+async def api_guardian_status(miner_id: int) -> dict:
+    """Guardian state for a miner: capability, settings, live readout."""
     cfg = get_config()
     miner = await db.get_miner(miner_id)
     if not miner:
         raise HTTPException(404, "miner not found")
     family = (miner.get("family") or "").lower()
-    latest = await db.latest_tuner_session(miner_id)
+    caps = _capabilities(family)
+    supported = family in GUARDIAN_FAMILIES and bool(caps.get("set_frequency"))
+
+    current = _miner_current_freq(miner_id)
+    if current is None:
+        latest = await db.latest_metric(miner_id)
+        if latest and latest.get("frequency_mhz"):
+            try:
+                current = int(latest["frequency_mhz"])
+            except (TypeError, ValueError):
+                current = None
+
+    g = cfg.guardian
     return {
-        "enabled": cfg.tuner.enabled,
-        "supported": family in TUNER_FAMILIES,
-        "running": tuner_controller.is_running(miner_id),
-        "live": tuner_controller.progress(miner_id),
-        "session": _tuner_session_view(latest),
-        "profiles": cfg.tuner.profiles,
+        "enabled": g.enabled,  # global feature flag
+        "supported": supported,
+        "miner_enabled": bool(miner.get("guardian_enabled")),
+        "max_freq_mhz": miner.get("guardian_max_freq_mhz"),
+        "freq_floor_mhz": miner.get("guardian_freq_floor_mhz"),
+        "current_freq_mhz": current,
+        "defaults": {
+            "interval_seconds": g.interval_seconds,
+            "vr_high_c": g.vr_high_c,
+            "vr_low_c": g.vr_low_c,
+            "hw_error_pct_max": g.hw_error_pct_max,
+            "step_down_vr_mhz": g.step_down_vr_mhz,
+            "step_down_err_mhz": g.step_down_err_mhz,
+            "step_up_mhz": g.step_up_mhz,
+            "frequency_floor_mhz": g.frequency_floor_mhz,
+        },
+        "live": guardian.status(miner_id),
     }
 
 
-@app.get("/api/miners/{miner_id}/tuner/results")
-async def api_tuner_results(miner_id: int, session_id: Optional[int] = None) -> dict:
-    """Return a session and its measured points (latest session by default)."""
+@app.post("/api/miners/{miner_id}/guardian/config")
+async def api_guardian_config(miner_id: int, payload: GuardianConfigPayload) -> dict:
+    cfg = get_config()
+    if not cfg.guardian.enabled:
+        raise HTTPException(404, "the Guardian feature is disabled")
     miner = await db.get_miner(miner_id)
     if not miner:
         raise HTTPException(404, "miner not found")
-    session = (
-        await db.get_tuner_session(session_id)
-        if session_id
-        else await db.latest_tuner_session(miner_id)
-    )
-    if not session or int(session["miner_id"]) != int(miner_id):
-        return {"session": None, "points": []}
-    points = await db.list_tuner_points(int(session["id"]))
-    return {"session": _tuner_session_view(session), "points": points}
-
-
-@app.post("/api/miners/{miner_id}/tuner/start")
-async def api_tuner_start(miner_id: int, payload: TunerStartPayload) -> dict:
-    cfg = get_config()
-    if not cfg.tuner.enabled:
-        raise HTTPException(404, "the tuner feature is disabled")
-    if not payload.consent:
+    family = (miner.get("family") or "").lower()
+    caps = _capabilities(family)
+    if family not in GUARDIAN_FAMILIES or not caps.get("set_frequency"):
         raise HTTPException(
-            400, "you must accept the risk before starting a tuning session"
+            400, "the Guardian is only supported on Bitaxe/Nerd* miners"
         )
-    miner = await db.get_miner(miner_id)
-    if not miner:
-        raise HTTPException(404, "miner not found")
-    try:
-        session_id = await tuner_controller.start_session(
-            miner, payload.profile, start_frequency=payload.start_frequency
-        )
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"ok": True, "session_id": session_id}
 
+    # On first enable, default the ceiling to the current frequency so the
+    # governor can only hold/back off until the user raises the cap.
+    max_freq = payload.max_freq_mhz
+    if (
+        payload.enabled
+        and max_freq is None
+        and not miner.get("guardian_max_freq_mhz")
+    ):
+        max_freq = _miner_current_freq(miner_id)
+        if max_freq is None:
+            raise HTTPException(
+                409,
+                "current frequency unknown yet — wait for the first poll, "
+                "then enable (or set a max frequency explicitly)",
+            )
 
-@app.post("/api/miners/{miner_id}/tuner/cancel")
-async def api_tuner_cancel(miner_id: int) -> dict:
-    cfg = get_config()
-    if not cfg.tuner.enabled:
-        raise HTTPException(404, "the tuner feature is disabled")
-    cancelled = await tuner_controller.cancel_session(miner_id)
-    return {"ok": True, "cancelled": cancelled}
+    await db.set_guardian_config(
+        miner_id,
+        enabled=payload.enabled,
+        max_freq_mhz=max_freq,
+        freq_floor_mhz=payload.freq_floor_mhz,
+    )
+    return {"ok": True, "max_freq_mhz": max_freq}
 
 
 # ---------- API: discovery ----------
