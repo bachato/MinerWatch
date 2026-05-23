@@ -18,6 +18,7 @@ from typing import Any
 from .base import (
     MinerDriver,
     MinerSample,
+    assign_cgminer_pool_slots as _assign_cgminer_pool_slots,
     parse_cgminer_pool_entry as _parse_cgminer_pool_entry,
     parse_si_difficulty as _parse_si_difficulty,
 )
@@ -257,6 +258,9 @@ class BraiinsDriver(MinerDriver):
         sample.pools.sort(
             key=lambda p: (p.priority if p.priority is not None else 999, p.url or "")
         )
+        # Tag primary/fallback slots from the sorted order so the Pools
+        # page can filter/badge them (cgminer has no explicit slot flag).
+        _assign_cgminer_pool_slots(sample.pools)
         # Legacy scalars: prefer the active pool, fall back to first Alive,
         # then to the first row.
         chosen = None
