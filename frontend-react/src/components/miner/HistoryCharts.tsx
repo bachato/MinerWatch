@@ -42,13 +42,53 @@ export function HistoryCharts({ minerId }: Props) {
 
   const series = useMemo(() => {
     const rows = data?.metrics ?? [];
-    return rows.map((p) => ({
-      ts: p.ts * 1000,
-      hashrate: p.hashrate_ths,
-      tempChip: p.temp_chip_c,
-      tempVr: p.temp_vr_c,
-    }));
+    // Reject rate is derived on the fly from the cumulative accepted /
+    // rejected counters that are already stored in the metrics tables —
+    // no extra backend column needed. We compute it *delta-based* between
+    // consecutive points (Δrejected / (Δaccepted + Δrejected)) so the line
+    // reflects what happened in each window rather than a flat lifetime
+    // average. On NerdOctaxe this is also the "HW error %": duplicate HW
+    // nonces are submitted to the pool and counted as rejected, so they're
+    // included here. Negative deltas (counter reset on a miner restart)
+    // and empty windows (no shares) produce a null → a gap in the line.
+    type Point = {
+      ts: number;
+      hashrate: number | null;
+      tempChip: number | null;
+      tempVr: number | null;
+      rejectPct: number | null;
+    };
+    const out: Point[] = [];
+    let prevAcc: number | null = null;
+    let prevRej: number | null = null;
+    for (const p of rows) {
+      const acc = p.accepted;
+      const rej = p.rejected;
+      let rejectPct: number | null = null;
+      if (acc !== null && rej !== null && prevAcc !== null && prevRej !== null) {
+        const dAcc = acc - prevAcc;
+        const dRej = rej - prevRej;
+        if (dAcc >= 0 && dRej >= 0 && dAcc + dRej > 0) {
+          rejectPct = (dRej / (dAcc + dRej)) * 100;
+        }
+      }
+      if (acc !== null) prevAcc = acc;
+      if (rej !== null) prevRej = rej;
+      out.push({
+        ts: p.ts * 1000,
+        hashrate: p.hashrate_ths,
+        tempChip: p.temp_chip_c,
+        tempVr: p.temp_vr_c,
+        rejectPct,
+      });
+    }
+    return out;
   }, [data]);
+
+  const hasReject = useMemo(
+    () => series.some((p) => p.rejectPct !== null),
+    [series],
+  );
 
   const tickFormat = (ts: number) => {
     const d = new Date(ts);
@@ -149,6 +189,56 @@ export function HistoryCharts({ minerId }: Props) {
             />
             <Line type="monotone" dataKey="tempChip" stroke="#fb923c" strokeWidth={2} dot={false} isAnimationActive={false} />
             <Line type="monotone" dataKey="tempVr" stroke="#facc15" strokeWidth={2} dot={false} isAnimationActive={false} />
+          </LineChart>
+        </ChartBlock>
+
+        {/* Reject rate (a.k.a. HW error % on NerdOctaxe). Derived from the
+            stored accepted/rejected counters, so full history is available
+            retroactively. `hasData` also requires at least one computable
+            point so we don't show an empty axis for a range with no shares. */}
+        <ChartBlock
+          title="Reject rate"
+          unit="%"
+          isLoading={isLoading}
+          hasData={!!series.length && hasReject}
+        >
+          <LineChart data={series} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+            <XAxis
+              dataKey="ts"
+              type="number"
+              domain={['dataMin', 'dataMax']}
+              tickFormatter={tickFormat}
+              stroke="hsl(var(--muted-foreground))"
+              fontSize={11}
+              tickMargin={6}
+            />
+            <YAxis
+              stroke="hsl(var(--muted-foreground))"
+              fontSize={11}
+              width={36}
+              domain={[0, 'auto']}
+              tickFormatter={(v) => fmtNum(v, 2)}
+            />
+            <Tooltip
+              contentStyle={{
+                background: 'hsl(var(--card))',
+                border: '1px solid hsl(var(--border))',
+                borderRadius: 8,
+                fontSize: 12,
+              }}
+              labelFormatter={(ts) => new Date(ts as number).toLocaleString()}
+              formatter={(v: number) => [`${fmtNum(v, 3)} %`, 'Reject rate']}
+            />
+            <Line
+              type="monotone"
+              dataKey="rejectPct"
+              stroke="#f87171"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+              connectNulls={false}
+            />
           </LineChart>
         </ChartBlock>
       </CardContent>

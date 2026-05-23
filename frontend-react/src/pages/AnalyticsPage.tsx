@@ -1,12 +1,16 @@
+import { useState } from 'react';
 import { BarChart3 } from 'lucide-react';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PredictionsCard } from '@/components/analytics/PredictionsCard';
 import { TopSharesCard } from '@/components/analytics/TopSharesCard';
 import { useFleetBestTop, useFleetPrediction, useMiners } from '@/api/hooks';
+import type { PredictionCoin } from '@/lib/types';
 
 export function AnalyticsPage() {
-  const { data: predData } = useFleetPrediction();
+  // Coin for the "Find a block (solo)" odds — 'auto' = the coin we're mining.
+  const [coin, setCoin] = useState<PredictionCoin>('auto');
+  const { data: predData } = useFleetPrediction(coin);
   const { data: topData } = useFleetBestTop('alltime', 10);
   const { data: minersData } = useMiners();
 
@@ -27,7 +31,7 @@ export function AnalyticsPage() {
         </p>
       </header>
 
-      <PredictionsCard data={prediction} />
+      <PredictionsCard data={prediction} coin={coin} onCoinChange={setCoin} />
       <TopSharesCard data={top} miners={miners} />
 
       {!anythingVisible && (

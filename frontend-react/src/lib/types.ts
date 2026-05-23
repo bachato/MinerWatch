@@ -315,10 +315,19 @@ export interface PredictionWindow {
   };
 }
 
+// Which coin the "Find a block (solo)" odds are computed against.
+// 'auto' = the coin the fleet is actually mining (network difficulty from
+// stratum); 'btc'/'bch' = that coin's live network difficulty from a public
+// explorer, so the user can compare odds across coins at the same hashrate.
+export type PredictionCoin = 'auto' | 'btc' | 'bch';
+
 export interface PredictionResponse {
   fleet_hashrate_ths: number | null;
   best_alltime: BestRecord | null;
   network_difficulty: number | null;
+  // Echo of the coin the backend used for find_block. Optional for
+  // backward-compat with older payloads that didn't include it.
+  coin?: PredictionCoin;
   predictions: {
     beat_best: PredictionWindow | null;
     find_block: PredictionWindow | null;

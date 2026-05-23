@@ -15,6 +15,7 @@ import type {
   MinerListResponse,
   NotableSharesResponse,
   PoolsResponse,
+  PredictionCoin,
   PredictionResponse,
   PushTestResponse,
   SettingsResponse,
@@ -129,11 +130,11 @@ export function useMinerNotableShares(id: number | undefined, limit = 25) {
   });
 }
 
-export function useFleetPrediction() {
+export function useFleetPrediction(coin: PredictionCoin = 'auto') {
   return useQuery({
-    queryKey: ['fleet-prediction'],
+    queryKey: ['fleet-prediction', coin],
     queryFn: ({ signal }) =>
-      api<PredictionResponse>('/api/fleet/prediction', { signal }),
+      api<PredictionResponse>(`/api/fleet/prediction?coin=${coin}`, { signal }),
     refetchInterval: FIVE_SECONDS,
   });
 }

@@ -1,11 +1,52 @@
 import { Target, Award } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { fmtDifficulty, fmtEta, fmtNum, fmtProb } from '@/lib/format';
-import type { PredictionResponse, PredictionWindow } from '@/lib/types';
+import type { PredictionCoin, PredictionResponse, PredictionWindow } from '@/lib/types';
 
 interface Props {
   data: PredictionResponse | null;
+  // Coin used for the "Find a block (solo)" odds, plus its setter so the
+  // in-card toggle can switch between the mined coin (auto) and BTC/BCH.
+  coin?: PredictionCoin;
+  onCoinChange?: (coin: PredictionCoin) => void;
+}
+
+const COIN_OPTIONS: Array<{ value: PredictionCoin; label: string }> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'btc', label: 'BTC' },
+  { value: 'bch', label: 'BCH' },
+];
+
+const COIN_LABEL: Record<PredictionCoin, string> = {
+  auto: 'Mined coin',
+  btc: 'Bitcoin (BTC)',
+  bch: 'Bitcoin Cash (BCH)',
+};
+
+function CoinToggle({
+  coin,
+  onChange,
+}: {
+  coin: PredictionCoin;
+  onChange: (coin: PredictionCoin) => void;
+}) {
+  return (
+    <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
+      {COIN_OPTIONS.map((o) => (
+        <Button
+          key={o.value}
+          size="sm"
+          variant={coin === o.value ? 'default' : 'ghost'}
+          className="h-6 px-2 text-[11px]"
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </Button>
+      ))}
+    </div>
+  );
 }
 
 /**
@@ -17,7 +58,7 @@ interface Props {
  * available (the backend already returns null in that case, but we
  * also gate at the card level to avoid showing an empty header).
  */
-export function PredictionsCard({ data }: Props) {
+export function PredictionsCard({ data, coin = 'auto', onCoinChange }: Props) {
   if (!data) return null;
   const hasFleetHash = data.fleet_hashrate_ths && data.fleet_hashrate_ths > 0;
   const hasBest = !!(data.best_alltime && data.best_alltime.value);
@@ -25,6 +66,22 @@ export function PredictionsCard({ data }: Props) {
 
   const beatBest = data.predictions.beat_best;
   const findBlock = data.predictions.find_block;
+
+  // Subtitle + empty message adapt to the chosen coin so it's always clear
+  // which network's difficulty the odds are based on.
+  const findSubtitle = data.network_difficulty
+    ? coin === 'auto'
+      ? `Network difficulty: ${fmtDifficulty(data.network_difficulty)}`
+      : `${COIN_LABEL[coin]} · difficulty ${fmtDifficulty(data.network_difficulty)}`
+    : coin === 'auto'
+      ? 'No network difficulty reported by your miners yet'
+      : COIN_LABEL[coin];
+  const findEmpty =
+    coin !== 'auto' && !data.network_difficulty
+      ? `Couldn't load ${COIN_LABEL[coin]} network difficulty right now — try again shortly.`
+      : coin === 'auto' && !data.network_difficulty
+        ? 'Your miners haven’t reported a network difficulty yet — pick BTC or BCH to estimate the odds.'
+        : undefined;
 
   return (
     <Card>
@@ -50,15 +107,17 @@ export function PredictionsCard({ data }: Props) {
             subtitle={`Current record: ${fmtDifficulty(data.best_alltime!.value)}`}
             window={beatBest}
           />
-          {data.network_difficulty && (
-            <PredictionBlock
-              icon={Target}
-              iconTone="text-chart-mining"
-              title="Find a block (solo)"
-              subtitle={`Network difficulty: ${fmtDifficulty(data.network_difficulty)}`}
-              window={findBlock}
-            />
-          )}
+          <PredictionBlock
+            icon={Target}
+            iconTone="text-chart-mining"
+            title="Find a block (solo)"
+            subtitle={findSubtitle}
+            window={findBlock}
+            emptyMessage={findEmpty}
+            headerExtra={
+              onCoinChange ? <CoinToggle coin={coin} onChange={onCoinChange} /> : undefined
+            }
+          />
         </div>
       </CardContent>
     </Card>
@@ -71,9 +130,22 @@ interface BlockProps {
   title: string;
   subtitle: string;
   window: PredictionWindow | null;
+  // Optional node rendered at the right edge of the header (e.g. the
+  // BTC/BCH coin toggle on the "Find a block" block).
+  headerExtra?: React.ReactNode;
+  // Optional override for the text shown when there's no prediction window.
+  emptyMessage?: string;
 }
 
-function PredictionBlock({ icon: Icon, iconTone, title, subtitle, window: w }: BlockProps) {
+function PredictionBlock({
+  icon: Icon,
+  iconTone,
+  title,
+  subtitle,
+  window: w,
+  headerExtra,
+  emptyMessage,
+}: BlockProps) {
   return (
     <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/30 p-4">
       <header className="flex items-center gap-3">
@@ -84,11 +156,12 @@ function PredictionBlock({ icon: Icon, iconTone, title, subtitle, window: w }: B
           <div className="text-sm font-semibold uppercase tracking-wider">{title}</div>
           <div className="text-xs text-muted-foreground">{subtitle}</div>
         </div>
+        {headerExtra && <div className="ml-auto">{headerExtra}</div>}
       </header>
 
       {!w ? (
         <p className="text-xs text-muted-foreground">
-          Not enough data yet — waiting for live hashrate and a known target.
+          {emptyMessage ?? 'Not enough data yet — waiting for live hashrate and a known target.'}
         </p>
       ) : (
         <>
