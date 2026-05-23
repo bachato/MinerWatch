@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import db
+from . import coin_difficulty
 from . import system_info
 from .alerts import ensure_vapid_keys, public_key_b64
 from .auth import (
@@ -695,8 +696,20 @@ async def api_miner_notable_shares(miner_id: int, limit: int = 50) -> dict:
 
 
 @app.get("/api/fleet/prediction")
-async def api_fleet_prediction() -> dict:
+async def api_fleet_prediction(coin: str = "auto") -> dict:
     """Statistical prediction widget per il fleet.
+
+    ``coin`` controlla quale difficoltà di rete usare per la stima
+    "Find a block (solo)":
+      * ``auto`` (default) — usa la ``network_difficulty`` riportata via
+        stratum dal miner, cioè la moneta che stiamo effettivamente minando
+        (comportamento storico, invariato).
+      * ``btc`` / ``bch`` — recupera la difficoltà di rete corrente di quella
+        moneta da un explorer pubblico (vedi ``coin_difficulty``), così
+        l'utente può confrontare le proprie chance cambiando moneta a parità
+        di hashrate. Se il recupero fallisce, ``network_difficulty`` resta
+        ``None`` e la stima viene semplicemente omessa.
+
 
     Calcola la probabilità di battere il best-share all-time corrente
     entro 1h / 24h / 7d, e l'expected time to beat. Se almeno un miner
@@ -752,6 +765,18 @@ async def api_fleet_prediction() -> dict:
             except (TypeError, ValueError):
                 pass
 
+    # ---- Coin override per "Find a block" ----------------------------
+    # Default ("auto"): teniamo la difficoltà stratum calcolata sopra.
+    # Per btc/bch sostituiamo con la difficoltà di rete di quella moneta
+    # presa da un explorer pubblico. Su fallimento azzeriamo network_diff
+    # (meglio nessuna stima che una stima su difficoltà sbagliata).
+    coin_req = (coin or "auto").strip().lower()
+    coin_used = "auto"
+    if coin_req in coin_difficulty.supported_coins():
+        coin_used = coin_req
+        ext_diff = await coin_difficulty.get_difficulty(coin_req)
+        network_diff = ext_diff if (ext_diff and ext_diff > 0) else None
+
     # ---- Best all-time del fleet ----
     best = (await db.get_fleet_best_records()).get("alltime")
 
@@ -791,6 +816,7 @@ async def api_fleet_prediction() -> dict:
         "fleet_hashrate_ths": round(fleet_h_ths, 4) if any_hashrate else None,
         "best_alltime": best,
         "network_difficulty": network_diff,
+        "coin": coin_used,
         "predictions": {
             "beat_best": beat_best,
             "find_block": find_block,

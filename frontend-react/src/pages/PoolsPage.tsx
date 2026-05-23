@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ArrowUpDown, Network } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
@@ -57,6 +58,19 @@ interface SortState {
   key: SortKey;
   dir: 'asc' | 'desc';
 }
+
+// Pool list filter. "Active" = the slot the firmware reports as currently
+// mining (row.active === true); "Fallback" = every configured backup slot
+// (row.slot === 'fallback'); "All" = no filter. A row can be both active
+// and fallback at once (a miner that has failed over to its backup pool) —
+// in that case it shows under both "Active" and "Fallback".
+type PoolFilter = 'all' | 'active' | 'fallback';
+
+const POOL_FILTERS: Array<{ value: PoolFilter; label: string }> = [
+  { value: 'active', label: 'Active' },
+  { value: 'fallback', label: 'Fallback' },
+  { value: 'all', label: 'All' },
+];
 
 // Reject% from accepted/rejected. Returns null when neither counter is
 // available, or when accepted+rejected == 0 (avoids division-by-zero
@@ -123,6 +137,7 @@ function fmtCount(value: number | null | undefined): string {
 export function PoolsPage() {
   const { data, isLoading, isError, error } = usePools();
   const [sort, setSort] = useState<SortState>({ key: 'miner', dir: 'asc' });
+  const [filter, setFilter] = useState<PoolFilter>('all');
 
   const rows = data?.pools ?? [];
 
@@ -177,6 +192,17 @@ export function PoolsPage() {
     });
     return out;
   }, [rows, sort]);
+
+  const visibleRows = useMemo(() => {
+    switch (filter) {
+      case 'active':
+        return sortedRows.filter((r) => r.active === true);
+      case 'fallback':
+        return sortedRows.filter((r) => r.slot === 'fallback');
+      default:
+        return sortedRows;
+    }
+  }, [sortedRows, filter]);
 
   function toggleSort(key: SortKey) {
     setSort((s) =>
@@ -252,11 +278,29 @@ export function PoolsPage() {
 
   return (
     <div className="space-y-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Pools</h1>
-        <p className="text-sm text-muted-foreground">
-          Stratum endpoints configured on your miners · live
-        </p>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Pools</h1>
+          <p className="text-sm text-muted-foreground">
+            Stratum endpoints configured on your miners · live
+          </p>
+        </div>
+        {/* Active / Fallback / All segmented filter — same look as the
+            range selector on the miner History tab. Purely client-side
+            over the already-fetched rows. */}
+        <div className="flex gap-1 self-start rounded-lg border border-border bg-card p-1 sm:self-auto">
+          {POOL_FILTERS.map((f) => (
+            <Button
+              key={f.value}
+              size="sm"
+              variant={filter === f.value ? 'default' : 'ghost'}
+              className="h-7 px-3 text-xs"
+              onClick={() => setFilter(f.value)}
+            >
+              {f.label}
+            </Button>
+          ))}
+        </div>
       </header>
 
       <Card>
@@ -318,9 +362,20 @@ export function PoolsPage() {
                 </tr>
               </thead>
               <tbody>
-                {sortedRows.map((row, idx) => (
-                  <PoolRowView key={`${row.miner_id}-${row.slot ?? idx}-${row.url ?? idx}`} row={row} />
-                ))}
+                {visibleRows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={10}
+                      className="px-3 py-8 text-center text-sm text-muted-foreground"
+                    >
+                      No pools match the “{filter}” filter.
+                    </td>
+                  </tr>
+                ) : (
+                  visibleRows.map((row, idx) => (
+                    <PoolRowView key={`${row.miner_id}-${row.slot ?? idx}-${row.url ?? idx}`} row={row} />
+                  ))
+                )}
               </tbody>
             </table>
           </div>

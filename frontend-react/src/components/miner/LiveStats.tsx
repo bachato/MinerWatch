@@ -228,8 +228,16 @@ export function LiveStats({ data }: Props) {
   // on every family (computed even when hw counters are still null on a
   // freshly booted device). 2 decimal places.
   if (rejectionRate !== null) {
+    // On NerdOctaxe this doubles as the "HW error %": the firmware sends
+    // duplicate HW nonces to the pool and counts them as rejected, so the
+    // reject rate already includes them. This mirrors what NerdOS shows
+    // (it has no standalone HW%). Label + tooltip make the percentage form
+    // of the HW errors obvious on the NerdOctaxe view.
     rows.push({
-      label: 'Rejection rate',
+      label: isNerdOctaxe ? 'HW / reject rate' : 'Rejection rate',
+      title: isNerdOctaxe
+        ? 'Rejected shares as a % of total submitted: rejected / (accepted + rejected). This is the percentage form of the HW errors — the firmware sends duplicate HW nonces to the pool and counts them as rejected, so they are included here (same metric NerdOS shows).'
+        : undefined,
       value: <NumberCell value={fmtNum(rejectionRate, 2)} unit="%" />,
     });
   }
@@ -243,10 +251,13 @@ export function LiveStats({ data }: Props) {
     });
   }
   // Raw aggregate HW error counter — NerdOctaxe only (firmware exposes
-  // `duplicateHWNonces`; nothing equivalent on classic Bitaxe).
+  // `duplicateHWNonces`; nothing equivalent on classic Bitaxe). Its
+  // percentage form is the HW / reject rate row above.
   if (isNerdOctaxe && hwErrors !== null && hwErrors !== undefined) {
     rows.push({
-      label: 'HW errors',
+      label: 'HW errors (count)',
+      title:
+        'Raw duplicate-HW-nonce counter reported by the firmware (duplicateHWNonces). Its percentage form is the HW / reject rate above.',
       value: <NumberCell value={String(hwErrors)} unit="" />,
     });
   }

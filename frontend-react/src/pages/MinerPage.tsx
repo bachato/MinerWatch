@@ -12,7 +12,6 @@ import { HardwareCards } from '@/components/miner/HardwareCards';
 import { Hashboards } from '@/components/miner/Hashboards';
 import { HistoryCharts } from '@/components/miner/HistoryCharts';
 import { FanControls } from '@/components/miner/FanControls';
-import { TuningPanel } from '@/components/miner/TuningPanel';
 import { useMiner } from '@/api/hooks';
 
 /**
@@ -102,7 +101,10 @@ export function MinerPage() {
           <TabsTrigger value="hardware">Hardware</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="controls">Controls</TabsTrigger>
-          <TabsTrigger value="tuning">Tuning (Advanced only)</TabsTrigger>
+          {/* "Tuning (Advanced only)" tab intentionally removed from the UI
+              for now — the TuningPanel component and the /tuner API endpoints
+              still exist, they're just not exposed here so users can't reach
+              that flow. Re-add the trigger + content below to restore it. */}
         </TabsList>
 
         <TabsContent value="overview" className="mt-0 space-y-4">
@@ -125,10 +127,6 @@ export function MinerPage() {
 
         <TabsContent value="controls" className="mt-0">
           <FanControls data={data} />
-        </TabsContent>
-
-        <TabsContent value="tuning" className="mt-0">
-          <TuningPanel data={data} />
         </TabsContent>
       </Tabs>
     </div>
