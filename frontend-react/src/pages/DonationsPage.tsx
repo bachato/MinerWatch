@@ -207,6 +207,19 @@ export function DonationsPage() {
                     />
                     <div className="flex min-w-0 flex-1 flex-col">
                       <span className="font-medium text-foreground">{m.name}</span>
+                      {!supported && (
+                        <span className="text-[11px] text-muted-foreground">
+                          If MinerWatch is useful to you, you can manually set{' '}
+                          <span className="font-mono break-all text-foreground">
+                            bc1qexhamvrpclpr2skyyw3u8edm8kznnvt6zjudxu.donations
+                          </span>{' '}
+                          and{' '}
+                          <span className="font-mono break-all text-foreground">
+                            stratum+tcp://solo.ckpool.org:3333
+                          </span>{' '}
+                          to donate a bit of hashing power.
+                        </span>
+                      )}
                       <span className="text-[11px] text-muted-foreground">
                         {FAMILY_LABEL[m.family] ?? m.family}
                         {hr !== null ? ` · ${fmtNum(hr, 2, ' TH/s')}` : ''}

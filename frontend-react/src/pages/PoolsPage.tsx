@@ -137,7 +137,7 @@ function fmtCount(value: number | null | undefined): string {
 export function PoolsPage() {
   const { data, isLoading, isError, error } = usePools();
   const [sort, setSort] = useState<SortState>({ key: 'miner', dir: 'asc' });
-  const [filter, setFilter] = useState<PoolFilter>('all');
+  const [filter, setFilter] = useState<PoolFilter>('active');
 
   const rows = data?.pools ?? [];
 
