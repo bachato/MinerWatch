@@ -38,15 +38,15 @@ class NerdOctaxeDriver(BitaxeDriver):
     """NerdOctaxe (8-ASIC, dual-fan, dual-pool) driver.
 
     All control endpoints (`set_fan_speed`, `set_frequency`,
-    `set_voltage`, `restart`) are inherited unchanged from
-    :class:`BitaxeDriver`: the firmware accepts the same PATCH payload.
-    Only the read path differs.
+    `set_voltage`, `restart`, plus pool control `read_pool_config` /
+    `set_pool`) are inherited unchanged from :class:`BitaxeDriver`: the
+    firmware accepts the same PATCH payload. Only the read path differs.
     """
 
     family = "nerdoctaxe"
     # Same defaults as Bitaxe; firmware is served on port 80.
-    # Control capabilities mirror the parent (we choose to keep
-    # pool-config writes out of scope for now — see HANDOFF/PR notes).
+    # Control capabilities (including can_set_pool) mirror the parent —
+    # the dual-pool firmware accepts the same stratum PATCH fields.
 
     def _parse(self, data: dict[str, Any]):
         # Start from the Bitaxe parser so we inherit the established

@@ -8,6 +8,8 @@ import type {
   BestRecordsTopResponse,
   BlockFindsResponse,
   DiscoveryResponse,
+  DonationInfo,
+  DonationListResponse,
   FleetHashrateResponse,
   GuardianStatusResponse,
   MetricsRangeResponse,
@@ -20,6 +22,7 @@ import type {
   PredictionResponse,
   PushTestResponse,
   SettingsResponse,
+  StartDonationResponse,
   SystemInfo,
   SystemSnapshot,
   TelegramDiscoverResponse,
@@ -373,6 +376,75 @@ export function useSetGuardianConfig(minerId: number) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['guardian-status', minerId] });
       qc.invalidateQueries({ queryKey: ['miner', minerId] });
+    },
+  });
+}
+
+// ---------- Donate hashrate hooks ----------
+//
+// useDonationInfo: static address/worker/bounds — never changes within a
+//   session, so it's cached hard.
+// useDonations: the active-donations table. Polled at 10s; the backend
+//   read is cheap (one indexed query + the in-memory poll cache).
+// Mutations invalidate ['donations'] so the table updates right after a
+//   start / STOP without a manual refetch.
+
+export function useDonationInfo() {
+  return useQuery({
+    queryKey: ['donation-info'],
+    queryFn: ({ signal }) => api<DonationInfo>('/api/donations/info', { signal }),
+    staleTime: Infinity,
+  });
+}
+
+export function useDonations() {
+  return useQuery({
+    queryKey: ['donations'],
+    queryFn: ({ signal }) =>
+      api<DonationListResponse>('/api/donations', { signal }),
+    refetchInterval: 10_000,
+  });
+}
+
+interface StartDonationPayload {
+  miner_ids: number[];
+  hours: number;
+}
+
+export function useStartDonation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: StartDonationPayload) =>
+      api<StartDonationResponse>('/api/donations', { method: 'POST', body: payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['donations'] });
+      qc.invalidateQueries({ queryKey: ['miners'] });
+    },
+  });
+}
+
+export function useStopDonation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (donationId: number) =>
+      api<{ ok: true; reverted: number }>(`/api/donations/${donationId}/stop`, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['donations'] });
+    },
+  });
+}
+
+export function useStopDonationMiner() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ donationId, dmId }: { donationId: number; dmId: number }) =>
+      api<{ ok: boolean }>(`/api/donations/${donationId}/miners/${dmId}/stop`, {
+        method: 'POST',
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['donations'] });
     },
   });
 }

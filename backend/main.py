@@ -35,6 +35,7 @@ from .auth import (
     require_auth,
 )
 from .auto_control import auto_fan
+from .donations import donation_controller
 from .config import FRONTEND_DIR, db_path, get_config, reload_config
 from .discovery import discover_and_register, scan_network
 from .miners import DRIVERS, driver_for_record
@@ -138,10 +139,16 @@ async def on_startup() -> None:
     # Live per-share streamer for AxeOS miners. Self-disables if the
     # `websockets` lib is missing; only attaches to bitaxe-family miners.
     await log_streamer.start()
+    # Donate-hashrate: first revert anything whose window elapsed while we
+    # were down (boot catch-up = crash safety net), then start the loop
+    # that auto-reverts on expiry. See backend/donations.py.
+    await donation_controller.catch_up_on_boot()
+    await donation_controller.start()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    await donation_controller.stop()
     await log_streamer.stop()
     await guardian.stop()
     await auto_fan.stop()
@@ -872,6 +879,7 @@ def _capabilities(family: str) -> dict:
         "set_frequency": cls.can_set_frequency,
         "set_voltage": cls.can_set_voltage,
         "restart": cls.can_restart,
+        "set_pool": cls.can_set_pool,
     }
 
 
@@ -988,6 +996,96 @@ async def api_set_fan_config(miner_id: int, payload: FanConfigPayload) -> dict:
             except Exception:  # noqa: BLE001
                 pass
     return {"ok": True}
+
+
+# ---------- API: Donate hashrate ----------
+# Lets the user lend miners to the project's solo.ckpool address for a
+# set time, with automatic revert. See backend/donations.py and
+# docs/donate-hashrate-design.md.
+
+class DonationCreate(BaseModel):
+    miner_ids: list[int] = Field(..., min_length=1)
+    hours: float = Field(..., gt=0, le=72)
+
+
+@app.get("/api/donations/info")
+async def api_donations_info() -> dict:
+    """Static info for the Donations page: the address/worker we donate to
+    and the duration bounds. Single source of truth for the bounds so the
+    UI and server can't drift."""
+    from . import donations as dons
+    return {
+        "btc_address": dons.DONATION_BTC_ADDRESS,
+        "worker": dons.DONATION_WORKER,
+        "worker_name": dons.donation_worker_name(),
+        "pool_url": dons.CKPOOL_SOLO_URL,
+        "pool_port": dons.CKPOOL_SOLO_PORT,
+        "min_hours": dons.MIN_DONATION_HOURS,
+        "max_hours": dons.MAX_DONATION_HOURS,
+        "default_hours": dons.DEFAULT_DONATION_HOURS,
+    }
+
+
+@app.get("/api/donations")
+async def api_list_donations() -> dict:
+    """Flattened active-donations view for the table. Live hashrate and
+    pool confirmation come from the poller's last results."""
+    from .donations import CKPOOL_SOLO_URL
+    rows = await db.list_donation_miners(active_only=True)
+    samples = poller.last_results
+    out = []
+    for r in rows:
+        mid = int(r["miner_id"])
+        s = samples.get(mid)
+        online = bool(s.online) if s else False
+        hashrate = s.hashrate_ths if s else None
+        pool_url = s.pool_url if s else None
+        confirmed = bool(online and pool_url and CKPOOL_SOLO_URL in pool_url)
+        out.append({
+            "id": r["id"],
+            "donation_id": r["donation_id"],
+            "miner_id": mid,
+            "miner_name": r.get("miner_name"),
+            "family": r.get("miner_family"),
+            "host": r.get("miner_host"),
+            "status": r["status"],
+            "ends_ts": r["ends_ts"],
+            "seconds_remaining": max(0, int(r["ends_ts"]) - db.now_ts()),
+            "online": online,
+            "hashrate_ths": hashrate,
+            "pool_url": pool_url,
+            "confirmed": confirmed,
+            "last_error": r.get("last_error"),
+        })
+    return {"donations": out, "count": len(out)}
+
+
+@app.post("/api/donations")
+async def api_create_donation(payload: DonationCreate) -> dict:
+    """Start a donation. Returns 200 with a per-miner breakdown even when
+    some miners are rejected (unsupported family / already donating), so
+    the UI can explain what happened."""
+    return await donation_controller.start_donation(payload.miner_ids, payload.hours)
+
+
+@app.post("/api/donations/{donation_id}/stop")
+async def api_stop_donation(donation_id: int) -> dict:
+    """STOP all — revert every in-flight miner in the donation now."""
+    don = await db.get_donation(donation_id)
+    if not don:
+        raise HTTPException(404, "donation not found")
+    n = await donation_controller.revert_donation(donation_id)
+    return {"ok": True, "reverted": n}
+
+
+@app.post("/api/donations/{donation_id}/miners/{dm_id}/stop")
+async def api_stop_donation_miner(donation_id: int, dm_id: int) -> dict:
+    """STOP one miner — the per-row button in the active-donations table."""
+    dm = await db.get_donation_miner(dm_id)
+    if not dm or int(dm["donation_id"]) != donation_id:
+        raise HTTPException(404, "donation miner not found")
+    ok = await donation_controller.revert_miner(dm_id)
+    return {"ok": ok}
 
 
 @app.delete("/api/push/subscriptions/all")

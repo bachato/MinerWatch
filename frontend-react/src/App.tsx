@@ -6,6 +6,7 @@ import { AnalyticsPage } from '@/pages/AnalyticsPage';
 import { LiveSharesPage } from '@/pages/LiveSharesPage';
 import { MinerPage } from '@/pages/MinerPage';
 import { PoolsPage } from '@/pages/PoolsPage';
+import { DonationsPage } from '@/pages/DonationsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SystemPage } from '@/pages/SystemPage';
 import { UpdatePage } from '@/pages/UpdatePage';
@@ -32,6 +33,7 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/live" element={<LiveSharesPage />} />
         <Route path="/pools" element={<PoolsPage />} />
+        <Route path="/donations" element={<DonationsPage />} />
         <Route path="/miner/:id" element={<MinerPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="/system" element={<SystemPage />} />
