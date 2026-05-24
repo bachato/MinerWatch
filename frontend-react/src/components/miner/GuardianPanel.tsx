@@ -234,8 +234,8 @@ export function GuardianPanel({ data }: Props) {
         <div className="space-y-1 border-t border-border pt-4 text-xs text-muted-foreground">
           <p className="font-semibold text-foreground">Policy</p>
           <p>
-            VR &gt; {d.vr_high_c}°C → −{d.step_down_vr_mhz} MHz · HW errors &gt;{' '}
-            {d.hw_error_pct_max}% → −{d.step_down_err_mhz} MHz · VR &lt;{' '}
+            VR &gt; {d.vr_high_c}°C → −{d.step_down_vr_mhz} MHz · Rejected shares
+            &gt; {d.reject_pct_max}% → −{d.step_down_err_mhz} MHz · VR &lt;{' '}
             {d.vr_low_c}°C → +{d.step_up_mhz} MHz (up to your max). Otherwise it
             holds.
           </p>
@@ -247,7 +247,7 @@ export function GuardianPanel({ data }: Props) {
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
             <Stat label="Frequency" value={fmt(s.live?.frequency_mhz ?? currentFreq, 'MHz')} />
             <Stat label="VR temp" value={fmt(s.live?.vr_temp_c ?? null, '°C')} />
-            <Stat label="HW err" value={fmt(s.live?.hw_error_pct ?? null, '%')} />
+            <Stat label="Reject" value={fmt(s.live?.reject_pct ?? null, '%')} />
             <Stat label="Ceiling" value={fmt(s.live?.ceiling_mhz ?? s.max_freq_mhz, 'MHz')} />
             <Stat label="Floor" value={fmt(s.live?.floor_mhz ?? s.freq_floor_mhz, 'MHz')} />
           </div>

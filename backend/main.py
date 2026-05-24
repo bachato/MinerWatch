@@ -1163,7 +1163,7 @@ async def api_guardian_status(miner_id: int) -> dict:
             "interval_seconds": g.interval_seconds,
             "vr_high_c": g.vr_high_c,
             "vr_low_c": g.vr_low_c,
-            "hw_error_pct_max": g.hw_error_pct_max,
+            "reject_pct_max": g.reject_pct_max,
             "step_down_vr_mhz": g.step_down_vr_mhz,
             "step_down_err_mhz": g.step_down_err_mhz,
             "step_up_mhz": g.step_up_mhz,

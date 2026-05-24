@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] — 2026-05-24
+
+### Fixed
+
+- **Guardian instability signal** now uses the **rejected-share rate**
+  (`sharesRejected / (accepted + rejected)`) instead of the AxeOS
+  `hashrateMonitor` `errorCount / total`. The `total` field there turned out
+  to be the ASIC *hashrate* (GH/s), not a work counter, so the old ratio
+  produced absurd values (e.g. 478% / 7558%) and could throttle a perfectly
+  cool, healthy miner down toward its floor every cycle. Reject rate is a
+  genuine monotonic counter, in the right ballpark (well under 1% on a healthy
+  miner) and available on every AxeOS family. A `reject_min_shares` guard
+  (default 20) ignores intervals with too few shares so a single stale share
+  can't spike the rate. Config: `hw_error_pct_max` → `reject_pct_max`.
+
 ## [1.5.0] — 2026-05-24
 
 ### Added

@@ -209,11 +209,12 @@ class BitaxeDriver(MinerDriver):
             voltage_mv=voltage_mv,
             asic_count=asic_count,
             # Aggregate HW-error counter, summed across ASICs from the
-            # hashrateMonitor block. Used by the Guardian as a stability
-            # signal. NerdOctaxe overrides this with `duplicateHWNonces`.
+            # hashrateMonitor block. Raw telemetry only — NOT used by the
+            # Guardian (which governs on the reject rate instead; see the note
+            # on _hw_total_from_monitor). NerdOctaxe overrides this with
+            # `duplicateHWNonces`.
             hw_errors=_hw_errors_from_monitor(data),
-            # Matched work denominator (`total` per ASIC) so the Guardian can
-            # compute a real HW% = errorCount / total over an interval.
+            # NOTE: this is NOT a work denominator — see _hw_total_from_monitor.
             hw_total=_hw_total_from_monitor(data),
             uptime_s=_opt_int(data.get("uptimeSeconds")),
             accepted=accepted,
@@ -444,13 +445,14 @@ def _hw_errors_from_monitor(data: dict[str, Any]) -> int | None:
     """Sum the per-ASIC ``errorCount`` from the ``hashrateMonitor`` block.
 
     AxeOS's ``hashrateMonitor.asics[]`` carries one entry per physical ASIC,
-    each with an ``errorCount`` (invalid nonces returned by that ASIC). The
-    Guardian uses the delta of this monotonic counter over its interval as a
-    stability signal — undervolting raises the error rate.
+    each with an ``errorCount`` (invalid nonces returned by that ASIC). Kept as
+    raw telemetry; the Guardian does NOT use it (its only available denominator,
+    ``total``, turned out to be the hashrate, not a work counter — so a real
+    error % can't be derived from these fields. The Guardian uses the reject
+    rate instead).
 
     Returns the summed count, or ``None`` when the block is absent (older
-    firmware) or no entry reports ``errorCount`` — so the Guardian's error
-    term simply stays inactive and VR temperature governs alone.
+    firmware) or no entry reports ``errorCount``.
     """
     monitor = data.get("hashrateMonitor")
     if not isinstance(monitor, dict):
@@ -473,14 +475,13 @@ def _hw_errors_from_monitor(data: dict[str, Any]) -> int | None:
 def _hw_total_from_monitor(data: dict[str, Any]) -> int | None:
     """Sum the per-ASIC ``total`` work counter from ``hashrateMonitor``.
 
-    This is the denominator paired with :func:`_hw_errors_from_monitor` so the
-    Guardian can compute a real HW error % = errorCount / total over its
-    interval. Returns None when the block or the field is absent, in which
-    case the Guardian's error term stays inactive (VR temperature governs).
-
-    NOTE: the exact semantics of ``total`` should be confirmed against a real
-    AxeOS device — if it turns out not to be a monotonic work counter the
-    Guardian guards against it (it only uses the % when the delta is positive).
+    IMPORTANT: despite the name, ``total`` is NOT a cumulative work counter —
+    confirmed against a real AxeOS device (v2.13.1), each ASIC's ``total``
+    equals that ASIC's *hashrate* in GH/s (it's the sum of the per-domain
+    hashrates in ``domains``). So it cannot serve as a denominator for an error
+    %: dividing the cumulative ``errorCount`` by it yields nonsense (>100%).
+    This is why the Guardian governs on the reject rate, not on errorCount/total.
+    Kept here only as raw telemetry. Returns None when the field is absent.
     """
     monitor = data.get("hashrateMonitor")
     if not isinstance(monitor, dict):
