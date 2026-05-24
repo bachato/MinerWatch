@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.4] — 2026-05-24
+
+### Fixed
+
+- **Braiins BMM101 display name.** The BMM101 firmware doesn't report a model
+  in its cgminer `version` payload, so discovery used to fall back to
+  "Braiins `<ip>`" (e.g. `Braiins 192.168.1.12`). It now shows as
+  **Braiins BMM101** on the dashboard and the miner tab, with the model field
+  set to `BMM101`. Other miner families keep the host suffix to disambiguate
+  identical models. Re-run a network scan to update an already-registered
+  BMM101.
+
 ## [1.5.2] — 2026-05-24
 
 ### Fixed
