@@ -226,7 +226,7 @@ async def _identify_cgminer(host: str) -> dict | None:
             "port": PORT_CGMINER,
             "mac": None,
             "model": _default_model(family),
-            "name": f"{_default_model(family)} {host}",
+            "name": _default_name(family, host),
         }
 
     return {
@@ -235,16 +235,30 @@ async def _identify_cgminer(host: str) -> dict | None:
         "port": PORT_CGMINER,
         "mac": sample.mac,
         "model": sample.model or _default_model(family),
-        "name": sample.model or f"{_default_model(family)} {host}",
+        "name": sample.model or _default_name(family, host),
     }
 
 
 def _default_model(family: str) -> str:
     return {
         "luxos": "LuxOS",
-        "braiins": "Braiins",
+        "braiins": "BMM101",
         "canaan": "Avalon",
     }.get(family, family.title())
+
+
+def _default_name(family: str, host: str) -> str:
+    """Friendly fallback name when the firmware reports no model.
+
+    The Braiins BMM (Mini Miner) firmware doesn't expose a model in its
+    cgminer ``version`` payload, so without this we'd fall back to
+    "Braiins <ip>". The BMM101 is the only Braiins device that omits the
+    model, so we present it with its full product label. Other families
+    keep the host suffix to disambiguate identical models on the network.
+    """
+    if family == "braiins":
+        return "Braiins BMM101"
+    return f"{_default_model(family)} {host}"
 
 
 async def scan_network(cidr: str | None = None) -> list[dict]:
