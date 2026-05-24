@@ -537,7 +537,7 @@ export interface GuardianLive {
   ceiling_mhz: number | null;
   floor_mhz: number | null;
   vr_temp_c: number | null;
-  hw_error_pct: number | null;
+  reject_pct: number | null;
   reason: string;
   changed: boolean;
   ts: number;
@@ -549,7 +549,7 @@ export interface GuardianDefaults {
   interval_seconds: number;
   vr_high_c: number;
   vr_low_c: number;
-  hw_error_pct_max: number;
+  reject_pct_max: number;
   step_down_vr_mhz: number;
   step_down_err_mhz: number;
   step_up_mhz: number;

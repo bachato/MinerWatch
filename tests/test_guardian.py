@@ -19,7 +19,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from backend.guardian import (  # noqa: E402
     _GuardianState,
-    _hw_error_pct,
+    _reject_pct,
     decide_frequency,
 )
 
@@ -116,7 +116,7 @@ def test_no_vr_no_errors_holds():
 
 
 def test_no_errors_vr_governs():
-    # Nerd* case: no usable HW% → error term inactive, VR still governs.
+    # Too few shares this interval → reject term inactive (None), VR governs.
     target, _ = decide(current_freq=550, vr_temp_c=72.0, hw_error_pct=None)
     assert target == 530
 
@@ -135,43 +135,55 @@ def test_floor_above_ceiling_clamped():
     assert target == 600
 
 
-# ---- HW% windowed helper ----------------------------------------------------
+# ---- reject-rate windowed helper -------------------------------------------
 
-def _sample(hw_errors, hw_total):
-    return types.SimpleNamespace(hw_errors=hw_errors, hw_total=hw_total)
+MIN_SHARES = 20
 
 
-def test_hw_pct_first_tick_is_none_and_sets_baseline():
+def _sample(accepted, rejected):
+    return types.SimpleNamespace(accepted=accepted, rejected=rejected)
+
+
+def test_reject_first_tick_is_none_and_sets_baseline():
     st = _GuardianState()
-    pct = _hw_error_pct(st, _sample(100, 10_000))
+    pct = _reject_pct(st, _sample(1000, 5), MIN_SHARES)
     assert pct is None
-    assert st.prev_hw_errors == 100 and st.prev_hw_total == 10_000
+    assert st.prev_accepted == 1000 and st.prev_rejected == 5
 
 
-def test_hw_pct_computes_delta_over_interval():
+def test_reject_computes_delta_over_interval():
     st = _GuardianState()
-    _hw_error_pct(st, _sample(100, 10_000))          # baseline
-    pct = _hw_error_pct(st, _sample(110, 11_000))     # +10 err / +1000 work
+    _reject_pct(st, _sample(1000, 5), MIN_SHARES)          # baseline
+    # +95 accepted / +5 rejected → 5 / 100 = 5.0%
+    pct = _reject_pct(st, _sample(1095, 10), MIN_SHARES)
     assert pct is not None
-    assert abs(pct - 1.0) < 1e-9                       # 10/1000 = 1.0%
+    assert abs(pct - 5.0) < 1e-9
 
 
-def test_hw_pct_counter_reset_returns_none():
+def test_reject_min_shares_guard_returns_none():
     st = _GuardianState()
-    _hw_error_pct(st, _sample(500, 50_000))
-    # Miner rebooted → counters dropped: must not produce a negative/garbage %.
-    pct = _hw_error_pct(st, _sample(5, 500))
+    _reject_pct(st, _sample(1000, 5), MIN_SHARES)          # baseline
+    # Only 11 shares this interval (< MIN_SHARES) → too few to trust → None,
+    # so a single stale share can't spike the rate and force a throttle.
+    pct = _reject_pct(st, _sample(1010, 6), MIN_SHARES)
+    assert pct is None
+
+
+def test_reject_counter_reset_returns_none():
+    st = _GuardianState()
+    _reject_pct(st, _sample(5000, 50), MIN_SHARES)
+    # Miner rebooted → counters dropped: must not produce a garbage %.
+    pct = _reject_pct(st, _sample(10, 1), MIN_SHARES)
     assert pct is None
     # Baseline re-anchored to the new (lower) counters.
-    assert st.prev_hw_errors == 5 and st.prev_hw_total == 500
+    assert st.prev_accepted == 10 and st.prev_rejected == 1
 
 
-def test_hw_pct_no_denominator_returns_none():
-    # Nerd*: hw_total is None → no % computable on either tick.
+def test_reject_zero_rejects_is_zero_pct():
     st = _GuardianState()
-    _hw_error_pct(st, _sample(100, None))
-    pct = _hw_error_pct(st, _sample(150, None))
-    assert pct is None
+    _reject_pct(st, _sample(1000, 0), MIN_SHARES)
+    pct = _reject_pct(st, _sample(1100, 0), MIN_SHARES)    # 100 shares, 0 rej
+    assert pct == 0.0
 
 
 if __name__ == "__main__":

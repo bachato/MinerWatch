@@ -102,17 +102,17 @@ class GuardianCfg:
     The Guardian is a continuous, slow control loop (a twin of the
     server-side auto-fan PID in ``auto_control.py``, but acting on
     *frequency* instead of the fan). Per enabled miner it watches the VR
-    temperature and the HW error rate and nudges the ASIC frequency to
-    keep both inside safe bounds, recovering frequency when conditions
+    temperature and the rejected-share rate and nudges the ASIC frequency
+    to keep both inside safe bounds, recovering frequency when conditions
     cool down. It never goes above a per-miner ceiling (``max`` frequency,
     which defaults to the miner's current frequency). See
     ``docs/guardian-design.md`` for the full design, including the v2 plan
     that adds a voltage lever.
 
     Control loop (v1, frequency-only), evaluated once per ``interval_seconds``:
-      - VR temp  > ``vr_high_c``       → frequency − ``step_down_vr_mhz``
-      - HW err % > ``hw_error_pct_max``→ frequency − ``step_down_err_mhz``
-      - VR temp  < ``vr_low_c``        → frequency + ``step_up_mhz`` (≤ ceiling)
+      - VR temp   > ``vr_high_c``      → frequency − ``step_down_vr_mhz``
+      - reject %  > ``reject_pct_max`` → frequency − ``step_down_err_mhz``
+      - VR temp   < ``vr_low_c``       → frequency + ``step_up_mhz`` (≤ ceiling)
       - otherwise (deadband)           → hold
     Downward (safety) actions take priority over the upward recovery, and
     every result is clamped to [floor, ceiling]. Because AxeOS applies
@@ -143,10 +143,17 @@ class GuardianCfg:
     # watchdog watches the chip). 65–70 °C is the hysteresis deadband.
     vr_high_c: float = 70.0           # above → step frequency down
     vr_low_c: float = 65.0            # below → step frequency up (recover)
-    # HW error % over the interval (errorCount / total work × 100). When the
-    # firmware exposes no usable work denominator (e.g. Nerd* duplicateHW
-    # Nonces) the error term is inactive for v1 and VR governs alone.
-    hw_error_pct_max: float = 1.1
+    # Rejected-share % over the interval = Δrejected / Δ(accepted+rejected)
+    # × 100. This replaces the old errorCount/total HW% which was bogus on
+    # AxeOS (its hashrateMonitor `total` is the hashrate, not a work counter,
+    # so the ratio blew past 100%). Reject rate is monotonic, in the right
+    # ballpark (well under 1% on a healthy miner) and available on every
+    # AxeOS family (Bitaxe and Nerd*).
+    reject_pct_max: float = 1.1
+    # Statistical guard: only trust the reject % when at least this many
+    # shares landed in the interval, so a single stale share on a quiet
+    # window can't spike the rate and trigger a needless throttle.
+    reject_min_shares: int = 20
 
     # ---- Step sizes (MHz). Asymmetric on purpose: back off fast, ----
     # recover gently, so the loop settles instead of hunting at the edges.
@@ -166,8 +173,8 @@ class GuardianCfg:
 
     # ---- v2 (NOT active in v1; documented here for when we wire it). ----
     # AxeOS applies voltage changes live too, which opens a second lever:
-    #   * respond to sustained HW errors by RAISING coreVoltage (the proper
-    #     fix for undervolt instability) instead of only cutting frequency;
+    #   * respond to a sustained reject rate by RAISING coreVoltage (the
+    #     proper fix for undervolt instability) instead of only cutting freq;
     #   * when cutting frequency, optionally LOWER coreVoltage in step to
     #     stay near Vmin and preserve J/TH efficiency.
     # Auto-raising voltage 24/7 unattended is riskier (more heat/watts,

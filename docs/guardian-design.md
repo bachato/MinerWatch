@@ -34,7 +34,7 @@ Ognuno sul suo tempo e sul suo sensore — non litigano, si rinforzano:
 | Layer | File | Sensore | Leva | Cadenza | Ruolo |
 |---|---|---|---|---|---|
 | Auto-fan PID | `auto_control.py` | chip (`temp_chip_c`) | ventola | 5 s (loop interno veloce) | tiene il chip al target |
-| **Guardian** | `guardian.py` | **VR** (`temp_vr_c`) + HW err% | **frequenza** | ~5 min (loop esterno lento) | tiene VR/errori nei limiti |
+| **Guardian** | `guardian.py` | **VR** (`temp_vr_c`) + reject % | **frequenza** | ~5 min (loop esterno lento) | tiene VR/rifiuti nei limiti |
 | Watchdog overheat | `auto_control.py` | chip | ventola → 100% | 5 s | rete dura a 75 °C |
 
 Il VR è terreno scoperto: oggi **nessun** loop in MinerWatch lo governa (il PID
@@ -47,16 +47,17 @@ raffredda sia il VR sia il chip → il PID ventola rallenta.
 Valutata una volta ogni `interval_seconds` per ciascun miner abilitato:
 
 ```
-VR temp  > vr_high_c          → frequenza − step_down_vr_mhz    (sicurezza)
-HW err % > hw_error_pct_max   → frequenza − step_down_err_mhz   (sicurezza)
-VR temp  < vr_low_c           → frequenza + step_up_mhz         (recupero)
+VR temp   > vr_high_c         → frequenza − step_down_vr_mhz    (sicurezza)
+reject %  > reject_pct_max    → frequenza − step_down_err_mhz   (sicurezza)
+VR temp   < vr_low_c          → frequenza + step_up_mhz         (recupero)
 altrimenti (banda morta)      → hold
 ```
 
 Valori di default (`GuardianCfg`, tarati sul campo): `vr_high_c=70`,
 `vr_low_c=65` (banda morta = isteresi che evita l'oscillazione al bordo),
-`hw_error_pct_max=1.1`, `step_down_vr_mhz=20`, `step_down_err_mhz=10`,
-`step_up_mhz=10`, `interval_seconds=300`, `frequency_floor_mhz=400`.
+`reject_pct_max=1.1`, `reject_min_shares=20`, `step_down_vr_mhz=20`,
+`step_down_err_mhz=10`, `step_up_mhz=10`, `interval_seconds=300`,
+`frequency_floor_mhz=400`.
 
 Principi:
 
@@ -72,19 +73,27 @@ Principi:
 - La funzione di decisione `decide_frequency(...)` è **pura** (nessun I/O), così
   la policy è testabile in isolamento — vedi `tests/test_guardian.py`.
 
-### Il segnale HW error %
+### Il segnale di instabilità: reject rate (non l'HW error count)
 
-Calcolato a runtime come **delta sui contatori** tra un tick e il precedente:
-`Δerrori / Δlavoro × 100` (sorgenti: Bitaxe `hashrateMonitor.asics[].errorCount`
-+ `.total`; sommati in `MinerSample.hw_errors` / `hw_total`). Guardie: si usa la
-% solo se `Δlavoro > 0`, e un calo dei contatori (reboot del miner) azzera la
-baseline invece di produrre una % spuria.
+In v1 il secondo segnale è il **tasso di share rifiutate**, calcolato a runtime
+come **delta sui contatori** tra un tick e il precedente:
+`Δrejected / Δ(accepted + rejected) × 100` (sorgenti: `sharesRejected` /
+`sharesAccepted`, già in `MinerSample.rejected` / `accepted`). Guardie: la % si
+calcola solo se nell'intervallo sono arrivate almeno `reject_min_shares` share
+(altrimenti una singola share stale falserebbe il valore → si ritorna `None` e
+governa il solo VR per quel tick), e un calo dei contatori (reboot) azzera la
+baseline.
 
-Su **Nerd\*** il firmware espone solo `duplicateHWNonces` (senza denominatore di
-lavoro valido), quindi in v1 il termine errori è **inattivo** e governa il solo
-VR. È una scelta conservativa, non un bug: la soglia 1.1 % è comunque più lasca
-dello standard di un tuning one-shot, perché un governor a runtime deve
-tollerare più rumore prima di reagire.
+**Perché NON usiamo l'`errorCount` dell'`hashrateMonitor`.** Era il piano
+iniziale (`errorCount / total`), ma su un miner reale il campo `total`
+dell'`hashrateMonitor` si è rivelato essere **l'hashrate** (in GH/s, = somma dei
+`domains`), non un contatore di lavoro. Dividere un conteggio errori cumulativo
+per l'hashrate produceva valori assurdi (>100%, es. 478% / 7558% osservati). Il
+reject rate non ha questo problema: contatori monotòni veri, nella scala giusta
+(ben sotto l'1% su un miner sano), disponibili su **tutte** le famiglie AxeOS
+(Bitaxe *e* Nerd\*). La soglia 1.1 % è volutamente più lasca dello standard di un
+tuning one-shot, perché un governor a runtime deve tollerare più rumore prima di
+reagire.
 
 ## 4. Perché la cadenza è la manopola di sicurezza
 
@@ -110,7 +119,7 @@ un numero limitato e sotto controllo.
 + online + famiglia supportata, `_govern_one(...)`:
 
 1. ricava la frequenza corrente dal sample live (fallback: ultima comandata);
-2. calcola l'HW% sull'intervallo (avanza la baseline dei contatori);
+2. calcola il reject % sull'intervallo (avanza la baseline dei contatori);
 3. risolve `ceiling` (= `guardian_max_freq_mhz`, fallback alla freq corrente) e
    `floor` (= `guardian_freq_floor_mhz`, fallback al default globale);
 4. chiama `decide_frequency(...)`;
@@ -121,7 +130,7 @@ un numero limitato e sotto controllo.
 Lo stato per-miner (`_GuardianState`) tiene i contatori precedenti, l'ultima
 frequenza comandata, il timestamp dell'ultimo cambio e l'ultima decisione. Lo
 stato viene scartato quando un miner esce dalla lista (offline/disabilitato),
-così al rientro riparte con una baseline HW% pulita.
+così al rientro riparte con una baseline reject pulita.
 
 ## 6. Modello dati e API
 
@@ -163,11 +172,11 @@ riepilogo della policy, readout live e una nota di rischio. Tutto gated su
 ## 8. Evoluzione v2 — leva sul voltaggio (NON attiva in v1)
 
 Siccome AxeOS applica **anche il voltaggio** a caldo, si apre una seconda leva.
-Il termine errori in v1 cura il sintomo abbassando la frequenza, ma gli errori
-da instabilità sono in realtà un problema di **sotto-voltaggio**: la cura
-"giusta" sarebbe **+voltaggio**. La v2 potrebbe:
+Il termine reject in v1 cura il sintomo abbassando la frequenza, ma
+l'instabilità (rifiuti che salgono) è in realtà un problema di
+**sotto-voltaggio**: la cura "giusta" sarebbe **+voltaggio**. La v2 potrebbe:
 
-1. rispondere a errori HW sostenuti **alzando `coreVoltage`** (di
+1. rispondere a un reject rate sostenuto **alzando `coreVoltage`** (di
    `v2_voltage_step_mv`, entro `v2_voltage_ceiling_mv`) invece di tagliare
    frequenza;
 2. quando taglia frequenza, **abbassare anche il voltaggio** in coppia, per
@@ -184,8 +193,11 @@ comportarsi bene.
 
 - **Solo frequenza** (niente voltaggio — vedi §8).
 - **Solo Bitaxe / Nerd\*** (espongono `vrTemp` e `set_frequency`).
-- **Su Nerd\* il termine errori è inattivo** (manca il denominatore): governa il
-  solo VR. Fallback a errori/min: possibile evoluzione, non in v1.
+- **Il termine reject si disattiva sugli intervalli con poche share**
+  (< `reject_min_shares`): su un solo-miner a difficoltà alta, finestre con
+  pochi share fanno governare il solo VR per quel tick. È voluto (evita falsi
+  allarmi da una singola share stale), non un limite di famiglia: i contatori
+  share esistono sia su Bitaxe sia su Nerd\*.
 - **Nessuna finestra oraria** (l'amico n8n la usava per energia off-peak / fresco
   notturno; MinerWatch gira 24/7, quindi sempre attivo quando abilitato). Una
   finestra oraria è una possibile aggiunta futura.

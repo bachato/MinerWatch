@@ -8,8 +8,8 @@ different sensor:
   - the auto-fan PID is the FAST inner loop (5 s): it modulates the FAN to
     hold the CHIP temperature near a target;
   - the Guardian is the SLOW outer loop (default 5 min): it nudges the ASIC
-    FREQUENCY to keep the VR (voltage-regulator) temperature and the HW
-    error rate inside safe bounds, recovering frequency when things cool.
+    FREQUENCY to keep the VR (voltage-regulator) temperature and the
+    rejected-share rate inside safe bounds, recovering frequency when cool.
 
 Nothing else in MinerWatch governs the VR in a closed loop — the fan PID
 and the 75 °C overheat watchdog both watch the *chip*. The VR is frequently
@@ -20,10 +20,10 @@ when the VR gets hot the Guardian cuts frequency → less power → the VR
 
 Control law (v1, frequency-only), evaluated once per ``interval_seconds``:
 
-    VR temp  > vr_high_c        → frequency − step_down_vr_mhz   (safety)
-    HW err % > hw_error_pct_max → frequency − step_down_err_mhz  (safety)
-    VR temp  < vr_low_c         → frequency + step_up_mhz        (recover)
-    otherwise (deadband)        → hold
+    VR temp   > vr_high_c        → frequency − step_down_vr_mhz   (safety)
+    reject %  > reject_pct_max   → frequency − step_down_err_mhz  (safety)
+    VR temp   < vr_low_c         → frequency + step_up_mhz        (recover)
+    otherwise (deadband)         → hold
 
 Down-actions (safety) take priority over the upward recovery, and every
 result is clamped to the per-miner ``[floor, ceiling]``. The ceiling is the
@@ -49,8 +49,8 @@ table. It never changes voltage in v1 (see the v2 notes below and in
 docs/guardian-design.md).
 
 v2 (not active here): AxeOS also applies *voltage* changes live, which opens
-a second lever — respond to sustained HW errors by RAISING coreVoltage (the
-proper fix for undervolt instability) instead of only cutting frequency, and
+a second lever — respond to a sustained reject rate by RAISING coreVoltage
+(the proper fix for undervolt instability) instead of only cutting freq, and
 optionally lower voltage alongside frequency cuts to preserve J/TH. Auto-
 raising voltage 24/7 unattended is riskier (more heat/watts, closer to the
 hardware limits), so it stays out of v1. The decision function and the
@@ -100,11 +100,12 @@ def decide_frequency(
     is deliberately pure so the policy can be reasoned about and tested in
     isolation from the driver/poller plumbing.
 
-    Sensor values may be ``None`` (sensor absent or, for HW%, not yet
-    computable / no work denominator). A ``None`` simply disables the branch
-    that depends on it — e.g. with no VR reading the governor won't move on
-    temperature, and on Nerd* (no usable error denominator) the error branch
-    is skipped and VR governs alone.
+    ``hw_error_pct`` is the instability signal — in v1 the rejected-share %
+    over the interval. It (and ``vr_temp_c``) may be ``None``: a ``None``
+    simply disables the branch that depends on it. So with no VR reading the
+    governor won't move on temperature, and when too few shares landed in the
+    interval to trust a reject % the error branch is skipped and VR governs
+    alone. The function stays source-agnostic: it only sees "a percentage".
     """
     # Defensive: a mis-set floor above the ceiling must not brick the loop.
     if floor_mhz > ceiling_mhz:
@@ -126,7 +127,7 @@ def decide_frequency(
     elif hw_error_pct is not None and hw_error_pct > hw_error_pct_max:
         target = current_freq - step_down_err_mhz
         reason = (
-            f"HW err {hw_error_pct:.2f}% > {hw_error_pct_max:.2f}% "
+            f"Reject {hw_error_pct:.2f}% > {hw_error_pct_max:.2f}% "
             f"→ -{step_down_err_mhz} MHz"
         )
     elif vr_temp_c is not None and vr_temp_c < vr_low_c:
@@ -151,57 +152,67 @@ class _GuardianState:
     """Mutable per-miner state the loop carries between ticks."""
 
     __slots__ = (
-        "prev_hw_errors",
-        "prev_hw_total",
+        "prev_accepted",
+        "prev_rejected",
         "last_commanded_freq",
         "last_change_ts",
         "last_reason",
         "last_ts",
         "last_vr_c",
-        "last_hw_pct",
+        "last_reject_pct",
     )
 
     def __init__(self) -> None:
-        self.prev_hw_errors: int | None = None
-        self.prev_hw_total: int | None = None
+        self.prev_accepted: int | None = None
+        self.prev_rejected: int | None = None
         self.last_commanded_freq: int | None = None
         self.last_change_ts: float = 0.0
         self.last_reason: str | None = None
         self.last_ts: float = 0.0
         self.last_vr_c: float | None = None
-        self.last_hw_pct: float | None = None
+        self.last_reject_pct: float | None = None
 
 
-def _hw_error_pct(state: _GuardianState, sample: MinerSample) -> float | None:
-    """HW error % over the interval = Δerrors / Δwork × 100, or None.
+def _reject_pct(
+    state: _GuardianState, sample: MinerSample, min_shares: int
+) -> float | None:
+    """Rejected-share % over the interval = Δrejected / Δ(acc+rej) × 100, or None.
 
-    Uses the delta of the firmware's monotonic counters between this tick and
-    the previous one. Returns None on the first tick (no baseline yet), on a
-    counter reset (miner rebooted), or when there's no usable work denominator
-    (Nerd* exposes only ``duplicateHWNonces`` with ``hw_total`` zeroed). The
-    caller treats None as "error term inactive — VR governs alone".
+    Replaces the old errorCount/total HW% which was wrong on AxeOS: the
+    hashrateMonitor ``total`` field is the *hashrate*, not a work counter, so
+    dividing the cumulative error count by it produced absurd values (>100%).
+    Rejected shares (``sharesRejected`` / ``sharesAccepted``) are genuine
+    monotonic counters available on every AxeOS family, and their ratio sits
+    in the right ballpark (well under 1% on a healthy miner).
+
+    Computed as a *windowed* delta (instability shows up as a burst of fresh
+    rejects), guarded by ``min_shares``: if too few shares landed in the
+    interval the rate is statistically meaningless, so we return None (the
+    caller then governs on VR alone this tick). Returns None on the first
+    tick (no baseline) and on a counter reset (miner rebooted).
 
     Side effect: advances the stored baseline to the current counters.
     """
-    errs = sample.hw_errors
-    total = sample.hw_total
-    prev_e = state.prev_hw_errors
-    prev_t = state.prev_hw_total
+    acc = sample.accepted
+    rej = sample.rejected
+    prev_a = state.prev_accepted
+    prev_r = state.prev_rejected
 
     pct: float | None = None
     if (
-        errs is not None and total is not None
-        and prev_e is not None and prev_t is not None
-        and errs >= prev_e and total >= prev_t  # guard against counter resets
+        acc is not None and rej is not None
+        and prev_a is not None and prev_r is not None
+        and acc >= prev_a and rej >= prev_r  # guard against counter resets
     ):
-        d_err = errs - prev_e
-        d_tot = total - prev_t
-        if d_tot > 0:
-            pct = (d_err / d_tot) * 100.0
+        d_acc = acc - prev_a
+        d_rej = rej - prev_r
+        d_tot = d_acc + d_rej
+        if d_tot >= max(1, int(min_shares)):
+            pct = (d_rej / d_tot) * 100.0
 
     # Advance the baseline (also resets cleanly after a detected reset).
-    state.prev_hw_errors = errs
-    state.prev_hw_total = total
+    state.prev_accepted = acc
+    state.prev_rejected = rej
     return pct
 
 
@@ -243,10 +254,10 @@ class GuardianController:
     async def _run(self) -> None:
         cfg = get_config().guardian
         log.info(
-            "Guardian started — interval=%ds VR>%.0f°C −%dMHz / HW%%>%.2f −%dMHz "
+            "Guardian started — interval=%ds VR>%.0f°C −%dMHz / reject%%>%.2f −%dMHz "
             "/ VR<%.0f°C +%dMHz, floor=%dMHz",
             cfg.interval_seconds, cfg.vr_high_c, cfg.step_down_vr_mhz,
-            cfg.hw_error_pct_max, cfg.step_down_err_mhz,
+            cfg.reject_pct_max, cfg.step_down_err_mhz,
             cfg.vr_low_c, cfg.step_up_mhz, cfg.frequency_floor_mhz,
         )
         from .poller import poller as _poller
@@ -290,7 +301,7 @@ class GuardianController:
                 log.exception("guardian: miner=%s govern error", miner.get("name"))
 
         # Drop state for miners no longer governed/online so a returning miner
-        # starts with a fresh HW% baseline instead of a stale delta.
+        # starts with a fresh reject-rate baseline instead of a stale delta.
         for mid in list(self._states):
             if mid not in seen:
                 self._states.pop(mid, None)
@@ -313,8 +324,8 @@ class GuardianController:
             else state.last_commanded_freq
         )
 
-        # HW% over the interval (advances the baseline as a side effect).
-        hw_pct = _hw_error_pct(state, sample)
+        # Reject % over the interval (advances the baseline as a side effect).
+        reject_pct = _reject_pct(state, sample, gcfg.reject_min_shares)
         vr_c = sample.temp_vr_c
 
         # Always record the latest reading for the status endpoint, even if we
@@ -322,11 +333,11 @@ class GuardianController:
         now = time.time()
         state.last_ts = now
         state.last_vr_c = vr_c
-        state.last_hw_pct = hw_pct
+        state.last_reject_pct = reject_pct
 
         if current_freq is None:
             # Can't govern without knowing the frequency.
-            self._publish(miner_id, miner, current_freq, vr_c, hw_pct,
+            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
                           "no frequency reading", changed=False)
             return
 
@@ -344,10 +355,10 @@ class GuardianController:
             ceiling_mhz=ceiling,
             floor_mhz=floor,
             vr_temp_c=vr_c,
-            hw_error_pct=hw_pct,
+            hw_error_pct=reject_pct,
             vr_high_c=gcfg.vr_high_c,
             vr_low_c=gcfg.vr_low_c,
-            hw_error_pct_max=gcfg.hw_error_pct_max,
+            hw_error_pct_max=gcfg.reject_pct_max,
             step_down_vr_mhz=gcfg.step_down_vr_mhz,
             step_down_err_mhz=gcfg.step_down_err_mhz,
             step_up_mhz=gcfg.step_up_mhz,
@@ -355,14 +366,14 @@ class GuardianController:
 
         if target == int(current_freq):
             # Nothing to do — don't touch the miner (no NVS write).
-            self._publish(miner_id, miner, current_freq, vr_c, hw_pct,
+            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
                           reason, changed=False, ceiling=ceiling, floor=floor)
             return
 
         # Optional cooldown: enforce extra settle time between changes.
         cooldown = int(gcfg.cooldown_seconds or 0)
         if cooldown > 0 and (now - state.last_change_ts) < cooldown:
-            self._publish(miner_id, miner, current_freq, vr_c, hw_pct,
+            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
                           f"cooldown ({reason})", changed=False,
                           ceiling=ceiling, floor=floor)
             return
@@ -376,7 +387,7 @@ class GuardianController:
         except Exception as exc:  # noqa: BLE001
             log.warning("guardian: miner=%s set_frequency failed: %s",
                         miner.get("name"), exc)
-            self._publish(miner_id, miner, current_freq, vr_c, hw_pct,
+            self._publish(miner_id, miner, current_freq, vr_c, reject_pct,
                           f"set_frequency failed: {exc}", changed=False,
                           ceiling=ceiling, floor=floor)
             return
@@ -385,13 +396,13 @@ class GuardianController:
             state.last_change_ts = now
             state.last_reason = reason
             log.info(
-                "guardian: miner=%s %d→%d MHz (%s) [VR=%s HW%%=%s ceiling=%d floor=%d]",
+                "guardian: miner=%s %d→%d MHz (%s) [VR=%s reject%%=%s ceiling=%d floor=%d]",
                 miner.get("name"), int(current_freq), int(target), reason,
                 f"{vr_c:.1f}" if vr_c is not None else "n/a",
-                f"{hw_pct:.2f}" if hw_pct is not None else "n/a",
+                f"{reject_pct:.2f}" if reject_pct is not None else "n/a",
                 ceiling, floor,
             )
-            self._publish(miner_id, miner, target, vr_c, hw_pct, reason,
+            self._publish(miner_id, miner, target, vr_c, reject_pct, reason,
                           changed=True, ceiling=ceiling, floor=floor)
         else:
             log.warning("guardian: miner=%s rejected set_frequency(%d)",
@@ -403,7 +414,7 @@ class GuardianController:
         miner: dict,
         freq: int | None,
         vr_c: float | None,
-        hw_pct: float | None,
+        reject_pct: float | None,
         reason: str,
         *,
         changed: bool,
@@ -417,7 +428,7 @@ class GuardianController:
             "ceiling_mhz": ceiling,
             "floor_mhz": floor,
             "vr_temp_c": round(vr_c, 1) if vr_c is not None else None,
-            "hw_error_pct": round(hw_pct, 3) if hw_pct is not None else None,
+            "reject_pct": round(reject_pct, 3) if reject_pct is not None else None,
             "reason": reason,
             "changed": bool(changed),
             "ts": int(time.time()),

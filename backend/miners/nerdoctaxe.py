@@ -83,15 +83,14 @@ class NerdOctaxeDriver(BitaxeDriver):
         # ---- Hardware errors ---------------------------------------
         # The closest analogue to "chip error rate" in the AxeOS-fork
         # firmware. Aggregate, not per-chip. Prefer `duplicateHWNonces`;
-        # if it's absent, keep the `errorCount` sum the Bitaxe parent
-        # already put in `hw_errors` (so the Guardian still has a signal).
+        # if it's absent, keep the `errorCount` sum the Bitaxe parent already
+        # put in `hw_errors`. This is raw telemetry only — the Guardian governs
+        # on the reject rate (sharesRejected/Accepted), not on this counter.
         dh = _opt_int(data.get("duplicateHWNonces"))
         if dh is not None:
             sample.hw_errors = dh
             # duplicateHWNonces has no matching work denominator, so clear
-            # hw_total: a % built from two different counters would be wrong.
-            # With no denominator the Guardian's error term stays inactive on
-            # Nerd* and VR temperature governs alone.
+            # hw_total (a % from two unrelated counters would be wrong anyway).
             sample.hw_total = None
 
         # ---- Dual-pool config (read-only) --------------------------

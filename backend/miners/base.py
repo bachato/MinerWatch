@@ -239,11 +239,11 @@ class MinerSample:
     # signal available. The frontend can also derive a rejection rate
     # from accepted/rejected; we expose the raw count here.
     hw_errors: int | None = None
-    # Total work counter, summed across ASICs from the AxeOS hashrateMonitor
-    # (`total` per ASIC). Paired with `hw_errors` (errorCount) it lets the
-    # Guardian compute a real HW error % = errors / total over its interval.
-    # Only a *matched* pair is meaningful: drivers that source `hw_errors`
-    # from a different counter (Nerd* `duplicateHWNonces`) must leave this None.
+    # Raw "total" field from the AxeOS hashrateMonitor (`total` per ASIC,
+    # summed). Despite the name this is NOT a work counter — on a real device
+    # it equals the ASIC hashrate (GH/s) — so it is NOT a usable denominator
+    # for an error %. Kept as telemetry only; the Guardian governs on the
+    # reject rate instead. See backend/miners/bitaxe.py:_hw_total_from_monitor.
     hw_total: int | None = None
     # Fleet-wide hardware error rate (%), aggregated across all boards.
     # Computed (not read) on LuxOS because its ``Device Hardware%`` field
