@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { DonateDialog } from '@/components/DonateDialog';
 import { useUpdateCheck } from '@/api/hooks';
 
 // MinerWatch's persistent shell:
@@ -61,11 +60,10 @@ type NavItem = LinkNavItem | ActionNavItem;
 
 interface NavListProps {
   onNavigate?: () => void;
-  onDonateClick: () => void;
   updateAvailable: boolean;
 }
 
-function NavList({ onNavigate, onDonateClick, updateAvailable }: NavListProps) {
+function NavList({ onNavigate, updateAvailable }: NavListProps) {
   const items: NavItem[] = [
     {
       kind: 'link',
@@ -119,11 +117,8 @@ function NavList({ onNavigate, onDonateClick, updateAvailable }: NavListProps) {
       badge: updateAvailable,
     },
     {
-      kind: 'action',
-      onClick: () => {
-        onDonateClick();
-        onNavigate?.();
-      },
+      kind: 'link',
+      to: '/donations',
       label: 'Donate',
       icon: Heart,
       description: 'Support MinerWatch',
@@ -244,7 +239,6 @@ function Footer({ version }: { version?: string }) {
 
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [donateOpen, setDonateOpen] = useState(false);
   const location = useLocation();
 
   // Update check: drives the red dot on the Update entry. Cached to
@@ -269,10 +263,7 @@ export function AppShell() {
         <div className="mb-8">
           <Brand />
         </div>
-        <NavList
-          onDonateClick={() => setDonateOpen(true)}
-          updateAvailable={updateAvailable}
-        />
+        <NavList updateAvailable={updateAvailable} />
         <Footer version={version} />
       </aside>
 
@@ -326,7 +317,6 @@ export function AppShell() {
 
             <NavList
               onNavigate={() => setMobileOpen(false)}
-              onDonateClick={() => setDonateOpen(true)}
               updateAvailable={updateAvailable}
             />
             <Footer version={version} />
@@ -337,10 +327,6 @@ export function AppShell() {
       <main className="flex-1 min-w-0 px-4 pb-6 pt-20 md:px-8 md:py-8 md:pt-8">
         <Outlet />
       </main>
-
-      {/* Global donate dialog — single instance so it can be opened from
-          either the desktop sidebar or the mobile drawer. */}
-      <DonateDialog open={donateOpen} onOpenChange={setDonateOpen} />
     </div>
   );
 }

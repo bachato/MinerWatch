@@ -8,6 +8,7 @@ etc.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -478,6 +479,60 @@ def assign_cgminer_pool_slots(pools: list[PoolSnapshot]) -> None:
         pool.slot = "primary" if i == 0 else "fallback"
 
 
+@dataclass
+class PoolConfig:
+    """A miner's pool configuration, captured for snapshot/restore.
+
+    Models the primary stratum slot plus the optional fallback slot that
+    AxeOS / ESP-Miner exposes on all Bitaxe-class boards. ``url`` is the
+    bare host without the port (e.g. ``solo.ckpool.org``); ``port`` is
+    kept separate so drivers can map cleanly onto firmware fields
+    (AxeOS ``stratumURL`` / ``stratumPort``).
+
+    Used by the "Donate hashrate" feature: before repointing a miner we
+    ``read_pool_config()`` and persist this as JSON, then restore it on
+    revert. Keeping the fallback slot means revert is faithful even when
+    the user had a custom backup pool.
+    """
+
+    url: str | None = None
+    port: int | None = None
+    user: str | None = None          # worker / stratum username
+    password: str | None = None
+    fb_url: str | None = None        # fallback slot
+    fb_port: int | None = None
+    fb_user: str | None = None
+    fb_password: str | None = None
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "url": self.url,
+                "port": self.port,
+                "user": self.user,
+                "password": self.password,
+                "fb_url": self.fb_url,
+                "fb_port": self.fb_port,
+                "fb_user": self.fb_user,
+                "fb_password": self.fb_password,
+            }
+        )
+
+    @classmethod
+    def from_json(cls, raw: str) -> "PoolConfig":
+        data = json.loads(raw) if raw else {}
+        return cls(
+            url=data.get("url"),
+            port=data.get("port"),
+            user=data.get("user"),
+            password=data.get("password"),
+            fb_url=data.get("fb_url"),
+            fb_port=data.get("fb_port"),
+            fb_user=data.get("fb_user"),
+            fb_password=data.get("fb_password"),
+        )
+
+
 class MinerDriver:
     """Base class. Subclasses must override ``DEFAULT_PORT`` and ``poll``."""
 
@@ -487,6 +542,10 @@ class MinerDriver:
     can_set_frequency: bool = False
     can_set_voltage: bool = False
     can_restart: bool = False
+    # Whether this family supports repointing its pool via the API. Gates
+    # the "Donate hashrate" feature: families with can_set_pool=False show
+    # the donate action disabled. See docs/donate-hashrate-design.md.
+    can_set_pool: bool = False
 
     def __init__(self, host: str, port: int | None = None, timeout: int = 4) -> None:
         self.host = host
@@ -509,6 +568,26 @@ class MinerDriver:
         raise NotImplementedError
 
     async def restart(self) -> bool:
+        raise NotImplementedError
+
+    async def read_pool_config(self) -> "PoolConfig | None":
+        """Capture the current pool config so it can be restored later.
+
+        Returns ``None`` (or raises) if the driver can't read it. Drivers
+        that set ``can_set_pool = True`` must implement this so the
+        donation flow can snapshot before switching.
+        """
+        raise NotImplementedError
+
+    async def set_pool(self, config: "PoolConfig") -> bool:
+        """Repoint the miner at ``config``. Returns True if the command
+        was accepted by the miner.
+
+        NOTE: acceptance != applied. Some firmwares (AxeOS) only pick up
+        a new stratum after a restart, and confirmation that the miner is
+        actually mining the new pool comes from the poller, not from this
+        return value.
+        """
         raise NotImplementedError
 
     # ---- Helpers ----

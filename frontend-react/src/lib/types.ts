@@ -275,6 +275,56 @@ export interface Capabilities {
   set_frequency: boolean;
   set_voltage: boolean;
   restart: boolean;
+  set_pool: boolean;
+}
+
+// ---------- Donate hashrate ----------
+
+export interface DonationInfo {
+  btc_address: string;
+  worker: string;
+  worker_name: string;
+  pool_url: string;
+  pool_port: number;
+  min_hours: number;
+  max_hours: number;
+  default_hours: number;
+}
+
+// One in-flight (miner, donation) row for the active-donations table.
+export interface DonationMinerRow {
+  id: number;            // donation_miners.id (used by the per-row STOP)
+  donation_id: number;
+  miner_id: number;
+  miner_name: string | null;
+  family: MinerFamily | null;
+  host: string | null;
+  status: 'active' | 'unreachable' | 'reverted' | 'error' | string;
+  ends_ts: number;
+  seconds_remaining: number;
+  online: boolean;
+  hashrate_ths: number | null;
+  pool_url: string | null;
+  confirmed: boolean;    // poller sees it mining the donation pool
+  last_error: string | null;
+}
+
+export interface DonationListResponse {
+  donations: DonationMinerRow[];
+  count: number;
+}
+
+// Per-miner outcome returned by POST /api/donations.
+export interface StartDonationMinerResult {
+  miner_id: number;
+  status: 'active' | 'error' | 'unsupported' | string;
+  error?: string;
+}
+
+export interface StartDonationResponse {
+  donation_id: number | null;
+  ends_ts: number;
+  miners: StartDonationMinerResult[];
 }
 
 export interface MinerDetailResponse {

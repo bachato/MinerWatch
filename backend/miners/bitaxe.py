@@ -18,6 +18,7 @@ import httpx
 from .base import (
     MinerDriver,
     MinerSample,
+    PoolConfig,
     PoolSnapshot,
     parse_si_difficulty as _parse_si_difficulty,
 )
@@ -30,6 +31,7 @@ class BitaxeDriver(MinerDriver):
     can_set_frequency = True
     can_set_voltage = True
     can_restart = True
+    can_set_pool = True
 
     def _base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
@@ -320,6 +322,67 @@ class BitaxeDriver(MinerDriver):
             return False
         return True
 
+    # ---- Pool control (Donate hashrate) ----
+
+    async def _system_info(self) -> dict[str, Any]:
+        """GET /api/system/info. Mirrors the fetch inlined in poll(); kept
+        as a small helper so read_pool_config() can reuse it."""
+        url = f"{self._base_url()}/api/system/info"
+        async with httpx.AsyncClient(timeout=self.timeout) as cli:
+            resp = await cli.get(url)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def read_pool_config(self) -> PoolConfig:
+        """Snapshot the current stratum config (primary + fallback).
+
+        NOTE: AxeOS does NOT return ``stratumPassword`` in
+        ``/api/system/info`` (it's write-only), so the password can't be
+        captured. On restore we fall back to ``"x"`` — fine for solo /
+        home pools, which ignore the worker password. This is the one
+        field that can't round-trip faithfully on AxeOS.
+        """
+        data = await self._system_info()
+        return PoolConfig(
+            url=data.get("stratumURL") or data.get("stratumUrl"),
+            port=_opt_int(data.get("stratumPort")),
+            user=data.get("stratumUser"),
+            password=None,  # not exposed by AxeOS — restored as "x"
+            fb_url=data.get("fallbackStratumURL") or data.get("fallbackStratumUrl"),
+            fb_port=_opt_int(data.get("fallbackStratumPort")),
+            fb_user=data.get("fallbackStratumUser"),
+            fb_password=None,
+        )
+
+    async def set_pool(self, config: PoolConfig) -> bool:
+        """Repoint the primary (and, if present in the snapshot, fallback)
+        stratum slot, then restart so AxeOS reconnects to the new pool."""
+        payload: dict[str, Any] = {}
+        if config.url is not None:
+            host, port = _split_host_port(config.url, config.port)
+            payload["stratumURL"] = host
+            if port is not None:
+                payload["stratumPort"] = port
+        if config.user is not None:
+            payload["stratumUser"] = config.user
+        payload["stratumPassword"] = config.password or "x"
+        # Restore the fallback slot too when the snapshot carried one, so
+        # revert is faithful for users who had a custom backup pool.
+        if config.fb_url is not None:
+            fb_host, fb_port = _split_host_port(config.fb_url, config.fb_port)
+            payload["fallbackStratumURL"] = fb_host
+            if fb_port is not None:
+                payload["fallbackStratumPort"] = fb_port
+            if config.fb_user is not None:
+                payload["fallbackStratumUser"] = config.fb_user
+            payload["fallbackStratumPassword"] = config.fb_password or "x"
+
+        ok = await self._patch_system(payload)
+        if ok:
+            # AxeOS only picks up a new stratum after a restart.
+            await self.restart()
+        return ok
+
 
 def _opt_float(value: Any) -> float | None:
     if value is None or value == "":
@@ -328,6 +391,28 @@ def _opt_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _split_host_port(url: str, port: int | None) -> tuple[str, int | None]:
+    """Return ``(host, port)`` for an AxeOS stratum field.
+
+    AxeOS stores host and port in separate fields. ``read_pool_config``
+    already keeps them apart, but be defensive: if a caller passes a
+    combined ``host:port`` string and no explicit port, split it. Strips
+    any ``stratum+tcp://`` scheme prefix that some configs carry.
+    """
+    if url is None:
+        return url, port
+    host = url
+    if "://" in host:
+        host = host.split("://", 1)[1]
+    if port is None and host.count(":") == 1:
+        h, _, p = host.partition(":")
+        try:
+            return h, int(p)
+        except ValueError:
+            return h, None
+    return host, port
 
 
 def _asics_from_monitor(data: dict[str, Any]) -> int | None:

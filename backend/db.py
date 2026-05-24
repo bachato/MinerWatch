@@ -231,6 +231,44 @@ CREATE TABLE IF NOT EXISTS notable_shares (
 
 CREATE INDEX IF NOT EXISTS idx_notable_shares_miner
     ON notable_shares(miner_id, share_difficulty DESC);
+
+-- ---------- Donate hashrate ----------
+-- One row per "Donate hashrate" action. A single action may span
+-- several miners (see donation_miners). ends_ts is an ABSOLUTE epoch so
+-- "time remaining" and the boot catch-up survive a restart. status is a
+-- roll-up of the child rows: active | completed | stopped | partial_error
+-- NOTE: keep these comments free of any semicolon — SCHEMA_SQL is split
+-- statement-by-statement on the semicolon separator.
+CREATE TABLE IF NOT EXISTS donations (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_ts   INTEGER NOT NULL,
+    ends_ts      INTEGER NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'active',
+    worker_name  TEXT NOT NULL,
+    note         TEXT
+);
+
+-- One row per miner inside a donation. prev_pool holds the JSON snapshot
+-- of the miner's pool config before the switch — the spine of the
+-- feature, used to restore on revert and on boot catch-up.
+-- status: active | unreachable | reverted | error
+CREATE TABLE IF NOT EXISTS donation_miners (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    donation_id   INTEGER NOT NULL,
+    miner_id      INTEGER NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'active',
+    prev_pool     TEXT NOT NULL,
+    applied_ts    INTEGER,
+    reverted_ts   INTEGER,
+    last_error    TEXT,
+    FOREIGN KEY (donation_id) REFERENCES donations(id) ON DELETE CASCADE,
+    FOREIGN KEY (miner_id)    REFERENCES miners(id)    ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_donation_miners_status
+    ON donation_miners(status);
+CREATE INDEX IF NOT EXISTS idx_donation_miners_donation
+    ON donation_miners(donation_id);
 """
 
 
@@ -1503,3 +1541,172 @@ async def set_guardian_config(
             ),
         )
         await conn.commit()
+
+
+# ---------- Donate hashrate ----------
+#
+# A "donation" is one user action that may cover several miners. Each
+# miner gets a donation_miners row holding the JSON snapshot of its pool
+# config (prev_pool) so we can restore it on revert / boot catch-up.
+# A child is "still in flight" while its status is one of these:
+_DONATION_ACTIVE_STATES = ("active", "unreachable")
+
+
+async def create_donation(
+    ends_ts: int, worker_name: str, note: str | None = None
+) -> int:
+    """Create a donation row (status 'active'). Returns its id."""
+    async with connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO donations (created_ts, ends_ts, status, worker_name, note) "
+            "VALUES (?, ?, 'active', ?, ?)",
+            (now_ts(), int(ends_ts), worker_name, note),
+        )
+        await conn.commit()
+        return int(cur.lastrowid)
+
+
+async def add_donation_miner(
+    donation_id: int,
+    miner_id: int,
+    prev_pool: str,
+    status: str = "active",
+    applied_ts: int | None = None,
+    last_error: str | None = None,
+) -> int:
+    """Attach a miner (with its pre-donation pool snapshot) to a donation."""
+    async with connect() as conn:
+        cur = await conn.execute(
+            "INSERT INTO donation_miners "
+            "(donation_id, miner_id, status, prev_pool, applied_ts, last_error) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (donation_id, miner_id, status, prev_pool, applied_ts, last_error),
+        )
+        await conn.commit()
+        return int(cur.lastrowid)
+
+
+async def active_donation_miner_ids() -> set[int]:
+    """Miner ids currently in an in-flight donation — used to refuse
+    donating the same miner twice at once."""
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT DISTINCT miner_id FROM donation_miners "
+            "WHERE status IN ('active', 'unreachable')"
+        ) as cur:
+            rows = await cur.fetchall()
+    return {int(r["miner_id"]) for r in rows}
+
+
+async def list_donation_miners(active_only: bool = True) -> list[dict[str, Any]]:
+    """Flattened view of donation miners joined with donation + miner info.
+    Powers the active-donations table in the UI."""
+    sql = """
+        SELECT dm.id, dm.donation_id, dm.miner_id, dm.status, dm.prev_pool,
+               dm.applied_ts, dm.reverted_ts, dm.last_error,
+               d.ends_ts, d.created_ts, d.worker_name,
+               d.status AS donation_status,
+               m.name AS miner_name, m.family AS miner_family, m.host AS miner_host
+        FROM donation_miners dm
+        JOIN donations d ON d.id = dm.donation_id
+        LEFT JOIN miners m ON m.id = dm.miner_id
+    """
+    if active_only:
+        sql += " WHERE dm.status IN ('active', 'unreachable')"
+    sql += " ORDER BY d.ends_ts ASC, dm.id ASC"
+    async with connect() as conn:
+        async with conn.execute(sql) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def donation_miners_due(now: int) -> list[dict[str, Any]]:
+    """In-flight children whose donation window has elapsed (ready to
+    auto-revert). Also returns those still flagged unreachable so the
+    controller keeps retrying them."""
+    async with connect() as conn:
+        async with conn.execute(
+            """
+            SELECT dm.*, d.ends_ts, d.worker_name
+            FROM donation_miners dm
+            JOIN donations d ON d.id = dm.donation_id
+            WHERE dm.status IN ('active', 'unreachable') AND d.ends_ts <= ?
+            ORDER BY dm.id ASC
+            """,
+            (int(now),),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def get_donation_miner(dm_id: int) -> dict[str, Any] | None:
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT * FROM donation_miners WHERE id = ?", (dm_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
+async def donation_miners_for(donation_id: int) -> list[dict[str, Any]]:
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT * FROM donation_miners WHERE donation_id = ? ORDER BY id ASC",
+            (donation_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def mark_donation_miner(
+    dm_id: int,
+    *,
+    status: str | None = None,
+    applied_ts: int | None = None,
+    reverted_ts: int | None = None,
+    last_error: str | None = None,
+) -> None:
+    """Update a donation_miner. COALESCE means only the fields passed are
+    changed (you can't reset a column back to NULL here)."""
+    async with connect() as conn:
+        await conn.execute(
+            """
+            UPDATE donation_miners SET
+              status      = COALESCE(?, status),
+              applied_ts  = COALESCE(?, applied_ts),
+              reverted_ts = COALESCE(?, reverted_ts),
+              last_error  = COALESCE(?, last_error)
+            WHERE id = ?
+            """,
+            (status, applied_ts, reverted_ts, last_error, dm_id),
+        )
+        await conn.commit()
+
+
+async def recompute_donation_status(donation_id: int) -> str:
+    """Roll the donation's status up from its children and persist it.
+    active (any child still in flight) | completed (all reverted) |
+    partial_error (no child in flight but at least one errored)."""
+    children = await donation_miners_for(donation_id)
+    statuses = {c["status"] for c in children}
+    if statuses & set(_DONATION_ACTIVE_STATES):
+        new = "active"
+    elif "error" in statuses:
+        new = "partial_error"
+    else:
+        new = "completed"
+    async with connect() as conn:
+        await conn.execute(
+            "UPDATE donations SET status = ? WHERE id = ?", (new, donation_id)
+        )
+        await conn.commit()
+    return new
+
+
+async def get_donation(donation_id: int) -> dict[str, Any] | None:
+    async with connect() as conn:
+        async with conn.execute(
+            "SELECT * FROM donations WHERE id = ?", (donation_id,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
