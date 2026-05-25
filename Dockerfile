@@ -79,6 +79,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Make the venv's binaries visible without sourcing activate.
     PATH="/opt/venv/bin:$PATH"
 
+# Signal to the running app that it lives inside a container. The in-app
+# self-update (download tarball → swap files in /app → os._exit) relies on a
+# service manager (launchd/systemd) relaunching the process and survives only
+# on a writable, persistent filesystem — neither holds for an immutable image.
+# backend/main.py reads this flag to refuse the install endpoint and point the
+# user at `docker compose pull` instead. It is NEVER set on a bare-metal
+# macOS/Linux install, so the existing self-update path there is unchanged.
+ENV MINERWATCH_CONTAINER=1
+
 # Bring the resolved virtualenv from the builder stage. No compiler
 # or apt cache lands in the final image.
 COPY --from=builder /opt/venv /opt/venv
@@ -96,6 +105,12 @@ WORKDIR /app
 # pieces the running app actually needs.
 COPY --chown=minerwatch:minerwatch backend            ./backend
 COPY --chown=minerwatch:minerwatch config.example.yaml ./config.example.yaml
+
+# The VERSION file is the single source of truth for the installed version
+# (footer, /api/version, update check). Without it inside the image,
+# updater.read_version() falls back to "0.0.0", which made the Update page
+# permanently report "update available" and broke the version display.
+COPY --chown=minerwatch:minerwatch VERSION             ./VERSION
 
 # React build output from stage 0. backend/config.py points
 # FRONTEND_DIR at /app/frontend-react/dist, so this is where the SPA

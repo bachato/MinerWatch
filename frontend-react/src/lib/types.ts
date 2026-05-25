@@ -654,6 +654,11 @@ export interface VersionResponse {
     machine: string;
     python: string;
   };
+  // True when running inside a container (Docker/Umbrel). The Update page
+  // uses this to replace the in-app "Install" button with `docker compose
+  // pull` instructions while still showing whether a newer release exists.
+  // Optional for backward-compat with older backends that omit it.
+  container?: boolean;
 }
 
 export interface UpdateCheckResponse {

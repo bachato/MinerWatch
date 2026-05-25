@@ -1,5 +1,5 @@
 manifestVersion: 1
-id: minerwatch
+id: imlenti-minerwatch
 category: bitcoin
 name: MinerWatch
 version: "1.6.0"
@@ -37,10 +37,11 @@ description: >-
   AGPL-3.0 licensed. No telemetry, no accounts, no cloud — your data
   never leaves the LAN.
 releaseNotes: >-
-  First public Umbrel release. Supports BitAxe, NerdQAxe, Canaan Avalon
-  (Nano 3s and Q) and Braiins BMM 101. Polling at 5 s by default, server-side
-  auto-fan PID, Web Push + Telegram alerts, block-find detection, tiered
-  metric storage.
+  Installable from the MinerWatch Community App Store. Supports BitAxe,
+  NerdQAxe, Canaan Avalon (Nano 3s and Q) and Braiins BMM 101. Polling at 5 s
+  by default, server-side auto-fan PID, Web Push + Telegram alerts, block-find
+  detection, tiered metric storage. Updates ship by bumping this version and
+  the image tag.
 developer: imlenti
 website: https://github.com/imlenti/MinerWatch
 dependencies: []

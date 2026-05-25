@@ -344,6 +344,10 @@ async def api_version() -> dict:
     return {
         "version": updater.read_version(),
         "system": updater.system_summary(),
+        # True under Docker/Umbrel. The frontend uses this to swap the
+        # "Install" button for `docker compose pull` instructions while still
+        # showing whether a newer release exists. Never set on bare-metal.
+        "container": updater.in_container(),
     }
 
 
@@ -373,7 +377,23 @@ async def api_update_install() -> dict:
     actual process exit is deferred ~1.5 s so this response can flush
     to the frontend, which then polls ``/api/version`` until the new
     version answers (signalling that the relaunched process is up).
+
+    Under Docker/Umbrel we refuse with 409: the self-update would swap files
+    into the container's ephemeral layer and ``os._exit`` would just have the
+    orchestrator recreate the container from the unchanged image, silently
+    reverting the "update". The read-only check endpoint stays available so
+    the UI can still tell the user a newer release exists and how to pull it.
     """
+    if updater.in_container():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "In-app updates are disabled under Docker/Umbrel because the "
+                "container image is immutable. Update with "
+                "`docker compose pull && docker compose up -d` (or bump the "
+                "app version in the Umbrel App Store)."
+            ),
+        )
     try:
         return await updater.install_update()
     except updater.UpdateError as exc:

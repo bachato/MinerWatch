@@ -37,16 +37,16 @@ If that port is already taken, change `MINERWATCH_PORT` in the
 Before submitting to <https://github.com/getumbrel/umbrel-apps>:
 
 1. **Tag and push the image**. Replace
-   `ghcr.io/imlenti/minerwatch:0.1.0` in `docker-compose.yml` with the
+   `ghcr.io/imlenti/minerwatch:1.6.0` in `docker-compose.yml` with the
    real registry path *and* pin to an immutable digest:
 
    ```bash
    docker buildx build \
      --platform linux/amd64,linux/arm64 \
-     -t ghcr.io/imlenti/minerwatch:0.1.0 \
+     -t ghcr.io/imlenti/minerwatch:1.6.0 \
      --push .
-   docker buildx imagetools inspect ghcr.io/imlenti/minerwatch:0.1.0
-   # copy the digest and pin it: image: ghcr.io/imlenti/minerwatch:0.1.0@sha256:...
+   docker buildx imagetools inspect ghcr.io/imlenti/minerwatch:1.6.0
+   # copy the digest and pin it: image: ghcr.io/imlenti/minerwatch:1.6.0@sha256:...
    ```
 
    The Umbrel App Store CI rejects un-pinned tags.

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
+  Container,
   Download,
   ExternalLink,
   Loader2,
@@ -85,6 +86,13 @@ export function UpdatePage() {
   const { data: check, isLoading: checkLoading, error: checkError } = useUpdateCheck();
   const forceCheck = useForceUpdateCheck();
   const install = useInstallUpdate();
+
+  // Under Docker/Umbrel the in-app self-update can't work (immutable image),
+  // so the backend refuses /api/update/install and flags `container: true`.
+  // We still show whether a newer release exists, but swap the Install button
+  // for `docker compose pull` instructions. Defaults to false → on bare-metal
+  // the page behaves exactly as before.
+  const isContainer = versionData?.container ?? false;
 
   const [phase, setPhase] = useState<InstallPhase>('idle');
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -269,7 +277,9 @@ export function UpdatePage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Update</h1>
         <p className="text-sm text-muted-foreground">
-          Pull the latest MinerWatch release from GitHub and restart the service.
+          {isContainer
+            ? 'Check for new MinerWatch releases on GitHub and pull the updated container image.'
+            : 'Pull the latest MinerWatch release from GitHub and restart the service.'}
         </p>
       </header>
 
@@ -342,6 +352,7 @@ export function UpdatePage() {
               installedVersion={installedVersion}
               reloadCountdown={reloadCountdown}
               onInstall={handleInstall}
+              isContainer={isContainer}
             />
           ) : (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -354,7 +365,8 @@ export function UpdatePage() {
       </Card>
 
       {/* Safety blurb — always visible, so the user knows what the
-          install button actually touches. */}
+          install button actually touches. Adapts to Docker/Umbrel, where
+          the update flow is a `docker compose pull` rather than a file swap. */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -362,27 +374,47 @@ export function UpdatePage() {
             What the update touches
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-xs text-muted-foreground">
-          <p>
-            The new release is downloaded, its SHA-256 is verified against the
-            checksum published with the release, then the code files are swapped
-            into place. The MinerWatch service then exits and is automatically
-            relaunched by the system (launchd on macOS, systemd on Linux).
-          </p>
-          <p>
-            <strong className="text-foreground">Your data is preserved:</strong>{' '}
-            <code className="rounded bg-muted/40 px-1">data/</code> (DB, push
-            keys, logs), <code className="rounded bg-muted/40 px-1">config.yaml</code>
-            , and <code className="rounded bg-muted/40 px-1">.venv/</code> are
-            never overwritten. Python dependencies are reinstalled on the next
-            boot if <code className="rounded bg-muted/40 px-1">requirements.txt</code>{' '}
-            changed.
-          </p>
-          <p>
-            If anything fails before the file swap (download, SHA-256, extract),
-            the install aborts and the running version stays untouched.
-          </p>
-        </CardContent>
+        {isContainer ? (
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <p>
+              In a container, updating means pulling a new image and recreating
+              the container — MinerWatch does not swap files in place. The
+              in-app installer is therefore disabled here.
+            </p>
+            <p>
+              <strong className="text-foreground">Your data is preserved:</strong>{' '}
+              the <code className="rounded bg-muted/40 px-1">data/</code> volume
+              (DB, push keys, logs, config overrides) is a mount that survives
+              image updates, so pulling a newer image never wipes it.
+            </p>
+            <p>
+              On Umbrel the update is fully managed: it lands automatically when
+              a new app version is published to the App Store.
+            </p>
+          </CardContent>
+        ) : (
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <p>
+              The new release is downloaded, its SHA-256 is verified against the
+              checksum published with the release, then the code files are swapped
+              into place. The MinerWatch service then exits and is automatically
+              relaunched by the system (launchd on macOS, systemd on Linux).
+            </p>
+            <p>
+              <strong className="text-foreground">Your data is preserved:</strong>{' '}
+              <code className="rounded bg-muted/40 px-1">data/</code> (DB, push
+              keys, logs), <code className="rounded bg-muted/40 px-1">config.yaml</code>
+              , and <code className="rounded bg-muted/40 px-1">.venv/</code> are
+              never overwritten. Python dependencies are reinstalled on the next
+              boot if <code className="rounded bg-muted/40 px-1">requirements.txt</code>{' '}
+              changed.
+            </p>
+            <p>
+              If anything fails before the file swap (download, SHA-256, extract),
+              the install aborts and the running version stays untouched.
+            </p>
+          </CardContent>
+        )}
       </Card>
     </div>
   );
@@ -427,6 +459,7 @@ interface AvailableBodyProps {
   installedVersion: string | null;
   reloadCountdown: number | null;
   onInstall: () => void;
+  isContainer: boolean;
 }
 
 function AvailableBody({
@@ -438,6 +471,7 @@ function AvailableBody({
   installedVersion,
   reloadCountdown,
   onInstall,
+  isContainer,
 }: AvailableBodyProps) {
   // Build the body of the status banner, with the special-cased live
   // countdown during the 'restarting' phase. The countdown ticks once
@@ -489,46 +523,82 @@ function AvailableBody({
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={onInstall} disabled={installing}>
-          {installing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
-          )}
-          {phase === 'installing'
-            ? 'Installing…'
-            : phase === 'restarting'
-              ? 'Restarting…'
-              : `Install v${check.latest}`}
-        </Button>
-        {check.sha256 && (
-          <span className="font-mono text-[10px] text-muted-foreground">
-            sha256: {check.sha256.slice(0, 12)}…
-          </span>
-        )}
-      </div>
+      {isContainer ? (
+        <ContainerUpdateInstructions latest={check.latest} />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button onClick={onInstall} disabled={installing}>
+              {installing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {phase === 'installing'
+                ? 'Installing…'
+                : phase === 'restarting'
+                  ? 'Restarting…'
+                  : `Install v${check.latest}`}
+            </Button>
+            {check.sha256 && (
+              <span className="font-mono text-[10px] text-muted-foreground">
+                sha256: {check.sha256.slice(0, 12)}…
+              </span>
+            )}
+          </div>
 
-      {(statusMessage || phase === 'success' || phase === 'restarting' || errorMessage) && (
-        <div
-          className={
-            phase === 'success'
-              ? 'flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300'
-              : phase === 'error'
-                ? 'flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300'
-                : 'flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground'
-          }
-        >
-          {phase === 'success' ? (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-          ) : phase === 'error' ? (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          ) : (
-            <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+          {(statusMessage || phase === 'success' || phase === 'restarting' || errorMessage) && (
+            <div
+              className={
+                phase === 'success'
+                  ? 'flex items-start gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:text-emerald-300'
+                  : phase === 'error'
+                    ? 'flex items-start gap-2 rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300'
+                    : 'flex items-start gap-2 rounded-md border border-border bg-muted/30 p-3 text-sm text-muted-foreground'
+              }
+            >
+              {phase === 'success' ? (
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : phase === 'error' ? (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              ) : (
+                <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+              )}
+              <span>{displayMessage}</span>
+            </div>
           )}
-          <span>{displayMessage}</span>
-        </div>
+        </>
       )}
+    </div>
+  );
+}
+
+/**
+ * Update instructions shown when MinerWatch runs inside a container
+ * (Docker/Umbrel). The in-app installer is disabled there — the image is
+ * immutable, so a file-swap would be discarded on the next container
+ * recreate. We tell the user to pull the new image instead.
+ */
+function ContainerUpdateInstructions({ latest }: { latest: string | null }) {
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+      <div className="flex items-start gap-2 text-muted-foreground">
+        <Container className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          You're running MinerWatch in a container, so in-app updates are
+          disabled. Pull the new image to update
+          {latest ? ` to v${latest}` : ''}:
+        </span>
+      </div>
+      <pre className="overflow-x-auto rounded bg-background/60 p-3 font-mono text-xs leading-relaxed">
+{`docker compose pull
+docker compose up -d`}
+      </pre>
+      <p className="text-xs text-muted-foreground">
+        On Umbrel, updates arrive automatically when a new app version is
+        published to the App Store. Your <code className="rounded bg-muted/40 px-1">data/</code>{' '}
+        volume (DB, push keys, settings) is preserved across image updates.
+      </p>
     </div>
   );
 }

@@ -543,3 +543,33 @@ def system_summary() -> Dict[str, str]:
         "machine": platform.machine(),
         "python": platform.python_version(),
     }
+
+
+def in_container() -> bool:
+    """Return True when MinerWatch runs inside a container image.
+
+    Why this matters: the self-update flow (download tarball → swap files in
+    ``ROOT_DIR`` → ``os._exit(1)``) depends on a service manager
+    (launchd/systemd) relaunching the process **and** on a writable,
+    persistent filesystem. Inside a container neither holds — the file swap
+    lands in the ephemeral writable layer and is discarded the next time the
+    image is recreated. So the API layer uses this to refuse the install
+    endpoint and steer the user to ``docker compose pull`` instead.
+
+    Detection is deliberately conservative so a bare-metal macOS/Linux install
+    is **never** misclassified (which would disable a working feature):
+
+      1. The authoritative signal is the explicit ``MINERWATCH_CONTAINER`` env
+         var, which our Dockerfile sets to ``1``. An explicit ``0``/``false``
+         forces "not a container" (lets a power user override).
+      2. Only when that env var is absent do we fall back to the presence of
+         the ``/.dockerenv`` sentinel file. On bare-metal that file does not
+         exist, so the fallback returns False and the self-update path is
+         left exactly as it is today.
+    """
+    val = os.environ.get("MINERWATCH_CONTAINER", "").strip().lower()
+    if val in {"1", "true", "yes", "on"}:
+        return True
+    if val in {"0", "false", "no", "off"}:
+        return False
+    return os.path.exists("/.dockerenv")
