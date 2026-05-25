@@ -29,7 +29,7 @@ services:
       PROXY_AUTH_ADD: "false"
 
   web:
-    image: ghcr.io/imlenti/minerwatch:0.1.0
+    image: ghcr.io/imlenti/minerwatch:1.6.0
     user: "1000:1000"
     restart: on-failure
     stop_grace_period: 1m

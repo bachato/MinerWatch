@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] — 2026-05-24
+
+### Added
+
+- **Published Docker image.** A new `docker-publish.yml` workflow builds and
+  pushes a multi-arch (linux/amd64 + linux/arm64) image to
+  `ghcr.io/imlenti/minerwatch` on every `vX.Y.Z` tag (and on manual dispatch).
+  Docker, Umbrel and the Community App Store can now pull a prebuilt image
+  instead of building from source.
+- **Umbrel Community App Store package** under `community-app-store/`
+  (`umbrel-app-store.yml` + `imlenti-minerwatch/`), installable by URL without
+  going through the official store review.
+- **Windows support via WSL2**, documented in the README — runs the standard
+  Linux flow (`start.sh` / `install-service.sh`), including a working in-app
+  update.
+- **`container` flag** on `GET /api/version` so the UI can adapt its update
+  guidance to the runtime.
+
+### Changed
+
+- **Container-aware updates.** Under Docker/Umbrel the in-app installer is now
+  disabled (the image is immutable, so a file swap would be discarded on the
+  next container recreate). `POST /api/update/install` returns 409, and the
+  Update page keeps showing whether a newer release exists while pointing to
+  `docker compose pull`. Bare-metal macOS/Linux self-update is unchanged.
+
+### Fixed
+
+- **Version reported as `0.0.0` under Docker.** The `VERSION` file is now
+  copied into the image, so the footer, `/api/version` and the update check
+  read the real version instead of falling back to `0.0.0` (which made the
+  Update page permanently report an update available).
+
 ## [1.5.4] — 2026-05-24
 
 ### Fixed
@@ -165,6 +198,7 @@ extensions).
   anything `< 15` to firmware-auto (`-1`).
 - No automated test suite yet — contributions welcome.
 
-[Unreleased]: https://github.com/imlenti/MinerWatch/compare/v1.1.6...HEAD
+[Unreleased]: https://github.com/imlenti/MinerWatch/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/imlenti/MinerWatch/releases/tag/v1.6.0
 [1.1.6]: https://github.com/imlenti/MinerWatch/releases/tag/v1.1.6
 [0.1.0]: https://github.com/imlenti/MinerWatch/releases/tag/v0.1.0

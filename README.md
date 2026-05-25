@@ -170,6 +170,61 @@ Stop with `Ctrl+C`, or `./stop.sh` if it was launched in the background.
 > parallel), set `MINERWATCH_SKIP_FRONTEND_AUTOHEAL=1` before launching
 > `start.sh`.
 
+### Windows (via WSL2)
+
+Windows is supported through **WSL2** (Windows Subsystem for Linux), which
+runs a real Linux kernel — so MinerWatch runs exactly as it does on Linux,
+using the same `start.sh` / `scripts/install-service.sh` flow. There is no
+separate Windows build to maintain, and the in-app **Update** button works
+(it relies on systemd inside WSL2, just like a native Linux install).
+
+1. Install WSL2 with Ubuntu (run in PowerShell as Administrator, then reboot):
+
+   ```powershell
+   wsl --install
+   ```
+
+2. Open the **Ubuntu** terminal and follow the Linux quick start:
+
+   ```bash
+   sudo apt update && sudo apt install -y python3-venv git
+   git clone https://github.com/imlenti/MinerWatch.git
+   cd MinerWatch
+   chmod +x start.sh
+   ./start.sh
+   ```
+
+   Open <http://localhost:8000> in your Windows browser.
+
+3. *(Optional)* Auto-start at login: enable systemd in WSL2 by adding the
+   following to `/etc/wsl.conf`, then run `wsl --shutdown` from PowerShell
+   and reopen Ubuntu:
+
+   ```ini
+   [boot]
+   systemd=true
+   ```
+
+   Then register the service as on Linux: `./scripts/install-service.sh`.
+
+> **Networking caveat.** By default WSL2 sits behind a virtual NAT, so LAN
+> **auto-discovery won't see your `192.168.x.x` miners** and other devices on
+> the LAN can't reach the dashboard. Two fixes:
+>
+> - **Mirrored networking** (Windows 11 22H2+, recommended): create
+>   `C:\Users\<you>\.wslconfig` with:
+>
+>   ```ini
+>   [wsl2]
+>   networkingMode=mirrored
+>   ```
+>
+>   then `wsl --shutdown` and reopen. WSL2 now shares the Windows host's
+>   network, so discovery and LAN access work like a native install.
+> - Or just **add miners manually by IP** from the *Add miner* button — the
+>   polling layer reaches miners at their LAN IPs through the NAT in most
+>   setups even without mirrored mode.
+
 ### macOS one-click (recommended for non-developers)
 
 Double-click `installer.command` from Finder. It will:
