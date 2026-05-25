@@ -29,13 +29,11 @@ miners on your home network — all from your browser, no cloud, no telemetry.
     <td align="center">
       <strong>Dashboard</strong><br/>
       <sub>Fleet overview · live miner cards · hashrate chart</sub><br/>
-      <!-- Replace docs/screenshots/dashboard.png with a fresh 1280×800 capture of / -->
       <img src="docs/screenshots/dashboard.png" alt="Dashboard" width="100%"/>
     </td>
     <td align="center">
       <strong>Miner controls</strong><br/>
       <sub>Per-device Controls tab · fan slider · AUTO PID</sub><br/>
-      <!-- Capture /miner/&lt;id&gt; with the Controls tab open and save as docs/screenshots/miner-controls.png -->
       <img src="docs/screenshots/miner-controls.png" alt="Miner controls" width="100%"/>
     </td>
   </tr>
@@ -43,14 +41,36 @@ miners on your home network — all from your browser, no cloud, no telemetry.
     <td align="center">
       <strong>Analytics</strong><br/>
       <sub>Beat-best & find-block predictions · top best shares</sub><br/>
-      <!-- Capture /analytics and save as docs/screenshots/analytics.png -->
       <img src="docs/screenshots/analytics.png" alt="Analytics" width="100%"/>
     </td>
     <td align="center">
       <strong>System</strong><br/>
       <sub>Raspberry Pi host metrics · throttling · CPU temp</sub><br/>
-      <!-- Capture /system on the Pi and save as docs/screenshots/system.png -->
       <img src="docs/screenshots/system.png" alt="System" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>Pools</strong><br/>
+      <sub>Every configured pool · accepted/rejected · ping latency</sub><br/>
+      <img src="docs/screenshots/pools.png" alt="Pools" width="100%"/>
+    </td>
+    <td align="center">
+      <strong>Live shares</strong><br/>
+      <sub>Real-time per-share stream · diff vs target (AxeOS)</sub><br/>
+      <img src="docs/screenshots/liveshares.png" alt="Live shares" width="100%"/>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>Donate hashrate</strong><br/>
+      <sub>Lend miners to the project solo pool · auto-revert</sub><br/>
+      <img src="docs/screenshots/donations.png" alt="Donate hashrate" width="100%"/>
+    </td>
+    <td align="center">
+      <strong>Update</strong><br/>
+      <sub>Version check · release notes · update flow</sub><br/>
+      <img src="docs/screenshots/update.png" alt="Update" width="100%"/>
     </td>
   </tr>
 </table>
