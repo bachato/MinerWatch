@@ -92,6 +92,14 @@ ENV MINERWATCH_CONTAINER=1
 # or apt cache lands in the final image.
 COPY --from=builder /opt/venv /opt/venv
 
+# gosu: lets the entrypoint start as root (to fix bind-mount ownership of
+# /app/data) and then drop privileges to the unprivileged runtime user. It's
+# a single ~2 MB static helper; we clean the apt cache so nothing else lingers.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && gosu nobody true
+
 # Run as a non-root user. UID/GID 1000 matches the typical first
 # Linux user, so a host-side bind mount of ./data won't have weird
 # permission flips when you switch between bare-metal and Docker.
@@ -117,6 +125,13 @@ COPY --chown=minerwatch:minerwatch VERSION             ./VERSION
 # (and /sw.js, /favicon.svg, /assets/*) is served from.
 COPY --chown=minerwatch:minerwatch --from=frontend-builder /build/dist ./frontend-react/dist
 
+# Entrypoint: when /app/data is a bind mount whose host-side owner doesn't
+# match UID 1000 (fresh install, Umbrel's ${APP_DATA_DIR}/data created as
+# root, …) it fixes the ownership, then drops privileges to the runtime user.
+# See docker-entrypoint.sh for the full rationale.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # Persistent runtime data: SQLite DB, VAPID keys, push subscriptions
 # and logs. Declaring the VOLUME means containers started without an
 # explicit mount still get a place to put this (avoiding silent loss
@@ -125,18 +140,27 @@ RUN mkdir -p /app/data \
  && chown minerwatch:minerwatch /app/data
 VOLUME ["/app/data"]
 
-USER minerwatch
+# NOTE: we deliberately do NOT set `USER minerwatch`. The container starts as
+# root so the entrypoint can chown the (bind-mounted) /app/data, then drops to
+# UID/GID 1000 via gosu before exec'ing the app. The app still runs
+# unprivileged — root exists only for the few milliseconds of setup.
 
 EXPOSE 8000
 
 # Healthcheck via Python stdlib — avoids apt-installing curl / wget
 # just for this. Hits /api/health every 30s; if the call raises
 # (4xx/5xx/timeout) urllib propagates and Python exits non-zero,
-# which Docker reads as "unhealthy".
+# which Docker reads as "unhealthy". The port follows MINERWATCH_PORT so the
+# check stays correct if the app is moved off 8000 (e.g. on Umbrel).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" \
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('MINERWATCH_PORT', '8000') + '/api/health', timeout=4)" \
         || exit 1
 
-# No --reload here: that's a dev convenience for start.sh, not for
-# a long-running container.
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Honour MINERWATCH_HOST / MINERWATCH_PORT exactly like start.sh does (it read
+# them but the old hard-coded CMD ignored them), defaulting to 0.0.0.0:8000.
+# Shell form so the env vars expand; `exec` makes uvicorn replace the shell so
+# it stays PID 1 (after gosu) and gets SIGTERM from `docker stop` directly. No
+# --reload here: that's a dev convenience for start.sh, not for a container.
+CMD ["sh", "-c", "exec uvicorn backend.main:app --host \"${MINERWATCH_HOST:-0.0.0.0}\" --port \"${MINERWATCH_PORT:-8000}\""]
