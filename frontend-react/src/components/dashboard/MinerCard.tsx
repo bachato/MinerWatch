@@ -33,7 +33,11 @@ export function MinerCard({ miner }: Props) {
     >
       <Card className="h-full p-4 transition-colors hover:bg-card/80 hover:border-border-strong">
         <header className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          {/* Left gutter (pl-7) reserves room for the drag handle drawn
+              by SortableMinerCard. The handle is 28 px wide and sits at
+              left-2; pl-7 (1.75 rem) lines the name up just to its
+              right, so visually they read as "[handle] miner name". */}
+          <div className="min-w-0 pl-7">
             <div className="truncate font-semibold">{miner.name}</div>
             <div className="truncate text-xs text-muted-foreground">
               {familyLabel} · {miner.host}

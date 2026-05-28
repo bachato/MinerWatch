@@ -1,7 +1,7 @@
 {
   "name": "minerwatch-frontend",
   "private": true,
-  "version": "1.9.0",
+  "version": "1.9.1",
   "type": "module",
   "description": "React + TypeScript frontend for MinerWatch.",
   "scripts": {
