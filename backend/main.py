@@ -554,19 +554,24 @@ async def api_fleet_hashrate_history(
 
     Default: last hour with 1-minute buckets → data points suitable for
     the "1-min average" chart on the home page. ``minutes`` is capped at
-    24h to keep queries from getting huge.
+    30 days (the same horizon as the 1m-rollup retention) and
+    ``bucket_seconds`` is capped at 1 day so callers can ask for sparse
+    long-range charts without hitting query-size cliffs. The underlying
+    helper auto-routes to the right tier (raw / 1m / 1h) based on the
+    requested range.
     """
     import time as _time
 
-    minutes = max(1, min(int(minutes), 24 * 60))
-    bucket_seconds = max(10, min(int(bucket_seconds), 3600))
+    minutes = max(1, min(int(minutes), 30 * 24 * 60))
+    bucket_seconds = max(10, min(int(bucket_seconds), 24 * 3600))
     to_ts = int(_time.time())
     from_ts = to_ts - minutes * 60
-    points = await db.fleet_hashrate_buckets(from_ts, to_ts, bucket_seconds)
+    points, tier = await db.fleet_hashrate_buckets(from_ts, to_ts, bucket_seconds)
     return {
         "from_ts": from_ts,
         "to_ts": to_ts,
         "bucket_seconds": bucket_seconds,
+        "tier": tier,
         "points": points,
     }
 

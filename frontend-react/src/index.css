@@ -8,16 +8,61 @@
    semantic tokens below, never the raw colours directly. */
 
 @layer base {
+  /* Light theme — applied when `.dark` is NOT on <html>. Designed to
+     keep the blue MinerWatch identity readable on a white background.
+     Numbers were tuned for AA contrast on the most common surfaces
+     (background, card, muted). */
   :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 210 100% 45%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+
+    --accent: 220 14% 94%;
+    --accent-foreground: 222 47% 11%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 13% 88%;
+    --input: 220 13% 91%;
+    --ring: 210 100% 45%;
+
+    /* Chart accents tuned for light backgrounds (more saturation,
+       darker lightness than the dark-mode counterparts). */
+    --chart-performance: 142 71% 38%;
+    --chart-hardware: 263 60% 50%;
+    --chart-thermal: 32 95% 48%;
+    --chart-power: 152 65% 38%;
+    --chart-mining: 199 89% 45%;
+
+    --radius: 0.625rem;
+  }
+
+  /* Dark theme — historical MinerWatch palette. Activated by toggling
+     `.dark` on <html>. The boot script in index.html sets this class
+     before React mounts (default: dark) so there is no flash. */
+  .dark {
     /* Dark theme — converted from the existing palette
          --bg            #0f1115 → 220 18% 7%
          --bg-card       #161a22 → 220 17% 11%
          --border        #232938 → 224 22% 18%
          --text          #e6e8ef → 226 22% 92%
          --text-dim      #8b93a7 → 224 13% 60%
-         --primary       #5db0ff → 210 100% 68%
-       so dropping a vanilla page next to a React page during the
-       migration doesn't look like two different apps. */
+         --primary       #5db0ff → 210 100% 68% */
     --background: 220 18% 7%;
     --foreground: 226 22% 92%;
 
@@ -59,8 +104,6 @@
     --chart-thermal: 32 95% 60%;
     --chart-power: 152 65% 55%;
     --chart-mining: 199 89% 65%;
-
-    --radius: 0.625rem;
   }
 }
 
