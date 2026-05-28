@@ -1169,7 +1169,7 @@ async def fleet_hashrate_buckets(
     from_ts: int,
     to_ts: int,
     bucket_seconds: int = 60,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], str]:
     """Total fleet hashrate aggregated by time buckets.
 
     Two-step strategy:
@@ -1183,16 +1183,23 @@ async def fleet_hashrate_buckets(
     firmware (Bitaxe: instantaneous; Avalon: ``MHS 5m`` → ``MHS 1m`` →
     ``MHS av``; Braiins: ``GHS 1m``). With ``bucket_seconds=60`` we
     therefore get a "total hashrate, 1-minute average" chart.
+
+    Storage tier is picked automatically from the range duration (same
+    routing as ``metrics_range``): short windows read raw 5s samples,
+    medium windows read 1m rollups, long windows read 1h rollups. The
+    chosen tier is returned alongside the rows so callers can label
+    the chart.
     """
     bucket_seconds = max(1, int(bucket_seconds))
-    sql = """
+    tier = _pick_metrics_tier(from_ts, to_ts)
+    sql = f"""
     SELECT bucket_ts, SUM(avg_ths) AS total_ths
     FROM (
         SELECT
             (ts / ?) * ? AS bucket_ts,
             miner_id,
             AVG(hashrate_ths) AS avg_ths
-        FROM metrics
+        FROM {tier}
         WHERE ts >= ? AND ts <= ? AND hashrate_ths IS NOT NULL
         GROUP BY bucket_ts, miner_id
     )
@@ -1204,10 +1211,11 @@ async def fleet_hashrate_buckets(
             sql, (bucket_seconds, bucket_seconds, from_ts, to_ts)
         ) as cur:
             rows = await cur.fetchall()
-    return [
+    points = [
         {"bucket_ts": int(r["bucket_ts"]), "total_ths": float(r["total_ths"] or 0)}
         for r in rows
     ]
+    return points, tier
 
 
 # ---------- Alerts ----------

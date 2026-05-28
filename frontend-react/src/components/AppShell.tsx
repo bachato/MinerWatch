@@ -8,14 +8,17 @@ import {
   Download,
   Heart,
   Menu,
+  Moon,
   Network,
   Radio,
   Server,
   Settings as SettingsIcon,
+  Sun,
   X,
 } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/lib/useTheme';
 import { useUpdateCheck } from '@/api/hooks';
 
 // MinerWatch's persistent shell:
@@ -237,6 +240,29 @@ function Footer({ version }: { version?: string }) {
   );
 }
 
+// Theme toggle button. Lives in the desktop sidebar header and in the
+// mobile top bar so it's reachable on both layouts without taking up
+// a nav slot. The icon mirrors the *current* theme (Sun on dark,
+// Moon on light) — clicking it switches to the other one.
+function ThemeToggle({ className }: { className?: string }) {
+  const { theme, toggle } = useTheme();
+  const isDark = theme === 'dark';
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      className={cn(
+        'inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring',
+        className,
+      )}
+    >
+      {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  );
+}
+
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
@@ -260,8 +286,9 @@ export function AppShell() {
     <div className="flex min-h-screen bg-background text-foreground">
       {/* Desktop sidebar — hidden on phones */}
       <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/50 px-4 py-6">
-        <div className="mb-8">
+        <div className="mb-8 flex items-center justify-between">
           <Brand />
+          <ThemeToggle />
         </div>
         <NavList updateAvailable={updateAvailable} />
         <Footer version={version} />
@@ -271,14 +298,17 @@ export function AppShell() {
           while the user scrolls long pages like Settings. */}
       <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur md:hidden">
         <Brand compact />
-        <button
-          type="button"
-          onClick={() => setMobileOpen(true)}
-          aria-label="Open navigation menu"
-          className="inline-flex h-10 w-10 items-center justify-center rounded-md text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
-        >
-          <Menu className="h-5 w-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle className="h-10 w-10" />
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            aria-label="Open navigation menu"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-md text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </div>
       </header>
 
       {/* Mobile drawer (Radix Dialog used as a side sheet) */}

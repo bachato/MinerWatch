@@ -413,6 +413,9 @@ export interface FleetHashrateResponse {
   from_ts: number;
   to_ts: number;
   bucket_seconds: number;
+  /** Storage tier the backend resolved for this range (``metrics`` |
+   *  ``metrics_1m`` | ``metrics_1h``). Older backends may omit it. */
+  tier?: string;
   points: FleetHashratePoint[];
 }
 
