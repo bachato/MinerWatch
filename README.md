@@ -732,9 +732,4 @@ or other brands.
 
 ## Acknowledgements
 
-- The hobbyist Bitcoin home-mining community for documenting hashboard
-  protocols
-- The Bitaxe / OSMU project for an exemplary open hardware miner
-- HashWatcher for being the inspiration that made me want a local-first,
-  open-source alternative
-- The Braiins / BOSminer team for keeping `cgminer-API` documented
+Special thanks to RedlineGT, Hylinus, No_Mistakes89, trendkraft for sending me logs and helping me test the changes step by step as I implemented them.
