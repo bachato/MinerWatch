@@ -49,14 +49,14 @@ export function SortableMinerCard({ miner }: Props) {
         title="Drag to reorder"
         // Sit on top of the card without intercepting the link's hit
         // area — only the handle's own footprint takes pointer events.
+        // Always-visible variant: the handle is part of the card now,
+        // not a hover affordance. MinerCard's header reserves the
+        // left gutter so the miner name sits right after it.
         className={cn(
           'absolute left-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-md',
-          'bg-card/60 text-muted-foreground/60 backdrop-blur-sm opacity-0 transition-opacity',
-          'hover:bg-accent hover:text-foreground hover:opacity-100',
-          'focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring',
-          'group-hover:opacity-100',
-          // Touch devices have no hover — keep the handle subtly visible.
-          'md:opacity-0 opacity-60',
+          'text-muted-foreground transition-colors',
+          'hover:bg-accent hover:text-foreground',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-ring',
           'cursor-grab active:cursor-grabbing',
         )}
         // Make the handle activatable by keyboard without firing the
