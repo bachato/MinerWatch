@@ -1,0 +1,322 @@
+# =============================================================================
+# MinerWatch Panel — Guition JC3248W535C (ESP32-S3) — full LVGL dashboard
+# =============================================================================
+# Stage 3-4 of docs/esphome/jc3248w535c-display-bringup.md:
+# display + backlight + touch + LVGL UI bound to the existing MQTT sensors.
+#
+# Copy this to ~/esphome/minerwatch-panel.yaml and INSTALL from the ESPHome
+# dashboard. It REPLACES the old data-only config but keeps the same MQTT
+# data path (proven working) untouched.
+#
+# Pins / driver are taken VERBATIM from working configs for this exact board
+# (DaradiciLevente/JC3248W535C-EspHome-NTP-Clock and clowrey/ESPhome-JC3248W535EN),
+# NOT from section 5 of the bring-up doc — those QSPI pins (clk 10 / data 11-14
+# / cs 9) were wrong for this board. Correct bus is clk 47 / data 21,48,40,39,
+# and the `mipi_spi` model `JC3248W535` auto-sets cs/reset/dimensions/init.
+#
+# Requires ESPHome >= 2025.11 (model JC3248W535 + native axs15231). Validated
+# shape against the 2026.5 docs. Needs a ~/esphome/secrets.yaml with:
+#   wifi_ssid: "..."
+#   wifi_password: "..."
+# =============================================================================
+
+esphome:
+  name: minerwatch-panel
+  friendly_name: MinerWatch Panel
+  platformio_options:
+    board_build.flash_mode: dio
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB          # was capped at 4MB by the wizard board default
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: "y"
+      CONFIG_SPIRAM_RODATA: "y"
+
+# Octal PSRAM — required for the framebuffer / LVGL buffer.
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+
+# Home Assistant API is optional here (data arrives via MQTT, not HA).
+# reboot_timeout: 0s prevents the device rebooting when no HA client connects.
+api:
+  reboot_timeout: 0s
+
+ota:
+  - platform: esphome
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "MinerWatch Panel Fallback"
+
+captive_portal:
+
+# =============================================================================
+# MQTT data path — UNCHANGED from the working data-only config.
+# The only addition is the on_value: handlers that push values into the UI.
+# =============================================================================
+mqtt:
+  broker: 192.168.1.10
+
+sensor:
+  - platform: mqtt_subscribe
+    name: "Miner hashrate"
+    id: miner_hashrate
+    topic: "minerwatch/e0e1a93f0cbf/f/hashrate_ths"
+    unit_of_measurement: "TH/s"
+    on_value:
+      - lvgl.label.update:
+          id: lbl_hashrate
+          text:
+            format: "%.1f"
+            args: [x]
+      # Arc is 0..100; scale TH/s x10 so 4.9 TH/s -> 49. Adjust max if needed.
+      - lvgl.arc.update:
+          id: arc_hashrate
+          value: !lambda "return (int)(x * 10);"
+
+  - platform: mqtt_subscribe
+    name: "Miner power"
+    id: miner_power
+    topic: "minerwatch/e0e1a93f0cbf/f/power_w"
+    unit_of_measurement: "W"
+    on_value:
+      - lvgl.label.update:
+          id: lbl_power
+          text:
+            format: "%.0f W"
+            args: [x]
+
+  - platform: mqtt_subscribe
+    name: "Miner chip temp"
+    id: miner_temp           # canonical id (doc section 2 used miner_temp; other
+                             # sections said miner_chip_temp — standardised here)
+    topic: "minerwatch/e0e1a93f0cbf/f/temp_chip_c"
+    unit_of_measurement: "C"
+    on_value:
+      - lvgl.label.update:
+          id: lbl_temp
+          text:
+            format: "%.0f C"
+            args: [x]
+      - lvgl.arc.update:
+          id: arc_temp
+          value: !lambda "return (int) x;"
+
+text_sensor:
+  - platform: mqtt_subscribe
+    name: "Miner status"
+    id: miner_status
+    topic: "minerwatch/e0e1a93f0cbf/availability"
+    on_value:
+      - lvgl.label.update:
+          id: lbl_status
+          text: !lambda 'return x == "online" ? std::string("ONLINE") : std::string("OFFLINE");'
+      - if:
+          condition:
+            lambda: 'return x == "online";'
+          then:
+            - lvgl.label.update:
+                id: lbl_status
+                text_color: 0x33D17A
+          else:
+            - lvgl.label.update:
+                id: lbl_status
+                text_color: 0xE01B24
+
+# =============================================================================
+# Buses + backlight
+# =============================================================================
+spi:
+  - id: qspi_bus
+    type: quad
+    clk_pin: 47
+    data_pins: [21, 48, 40, 39]
+
+i2c:
+  - id: touch_bus
+    sda: 4
+    scl: 8
+
+output:
+  - platform: ledc
+    id: backlight_output
+    pin: 1                   # backlight is GPIO1 on this board
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight"
+    output: backlight_output
+    restore_mode: ALWAYS_ON  # backlight ON at boot (black screen if off)
+
+# =============================================================================
+# Display + touch
+# model: JC3248W535 sets cs/reset/dimensions/init_sequence/color_order for us.
+# update_interval: never  -> LVGL drives the refreshes.
+# =============================================================================
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: JC3248W535
+    data_rate: 40MHz
+    rotation: 90             # landscape 480x320
+    update_interval: never
+    auto_clear_enabled: false
+
+touchscreen:
+  - platform: axs15231
+    id: main_touch
+    display: main_display
+    i2c_id: touch_bus
+    # swap_xy matches rotation 90. If taps land mirrored, add mirror_x/mirror_y.
+    transform:
+      swap_xy: true
+
+# =============================================================================
+# LVGL UI — single landscape page (480x320)
+# Two arcs (hashrate, chip temp) + power readout + status badge.
+# Fonts are LVGL built-in Montserrat (no network/gfonts needed). ASCII only,
+# so temp shows "62 C" not "62°C" — see note at bottom to enable a degree glyph.
+# Single display + single touchscreen -> LVGL binds them automatically.
+# =============================================================================
+lvgl:
+  buffer_size: 25%
+  default_font: montserrat_14
+  pages:
+    - id: main_page
+      bg_color: 0x0F1419
+      bg_opa: COVER
+      widgets:
+        # ---- header ----
+        - label:
+            align: TOP_LEFT
+            x: 12
+            y: 8
+            text_font: montserrat_20
+            text_color: 0x4DD0C4
+            text: "MINERWATCH"
+        - label:
+            id: lbl_status
+            align: TOP_RIGHT
+            x: -12
+            y: 10
+            text_font: montserrat_18
+            text_color: 0x9AA0A6
+            text: "--"
+
+        # ---- hashrate gauge (left) ----
+        - arc:
+            id: arc_hashrate
+            align: LEFT_MID
+            x: 18
+            width: 208
+            height: 208
+            min_value: 0
+            max_value: 100
+            value: 0
+            arc_width: 16
+            arc_color: 0x2A2E37
+            indicator:
+              arc_color: 0x33D17A
+              arc_width: 16
+            widgets:
+              - label:
+                  align: CENTER
+                  y: -52
+                  text_font: montserrat_16
+                  text_color: 0x9AA0A6
+                  text: "HASHRATE"
+              - label:
+                  id: lbl_hashrate
+                  align: CENTER
+                  y: -6
+                  text_font: montserrat_40
+                  text_color: 0xFFFFFF
+                  text: "0.0"
+              - label:
+                  align: CENTER
+                  y: 34
+                  text_font: montserrat_16
+                  text_color: 0x9AA0A6
+                  text: "TH/s"
+
+        # ---- chip temp gauge (right) ----
+        - arc:
+            id: arc_temp
+            align: RIGHT_MID
+            x: -18
+            width: 208
+            height: 208
+            min_value: 0
+            max_value: 100
+            value: 0
+            arc_width: 16
+            arc_color: 0x2A2E37
+            indicator:
+              arc_color: 0xE8A33D
+              arc_width: 16
+            widgets:
+              - label:
+                  align: CENTER
+                  y: -52
+                  text_font: montserrat_16
+                  text_color: 0x9AA0A6
+                  text: "CHIP TEMP"
+              - label:
+                  id: lbl_temp
+                  align: CENTER
+                  y: -6
+                  text_font: montserrat_40
+                  text_color: 0xFFFFFF
+                  text: "0"
+              - label:
+                  align: CENTER
+                  y: 34
+                  text_font: montserrat_16
+                  text_color: 0x9AA0A6
+                  text: "C"
+
+        # ---- power readout (bottom center) ----
+        - label:
+            align: BOTTOM_MID
+            y: -34
+            text_font: montserrat_14
+            text_color: 0x9AA0A6
+            text: "POWER"
+        - label:
+            id: lbl_power
+            align: BOTTOM_MID
+            y: -8
+            text_font: montserrat_24
+            text_color: 0xFFFFFF
+            text: "0 W"
+
+# =============================================================================
+# Notes
+# -----------------------------------------------------------------------------
+# * Touch calibration: if taps are mirrored, tweak touchscreen.transform
+#   (mirror_x / mirror_y) — values depend on the panel batch.
+# * Degree symbol: built-in Montserrat is ASCII-only. To show "62°C" replace
+#   default_font/text_font with a gfonts font that includes the glyph, e.g.
+#       font:
+#         - file: "gfonts://Roboto"
+#           id: roboto_40
+#           size: 40
+#           glyphs: "°0123456789.ABCDEFGHIJKLMNOPQRSTUVWXYZ /:%"
+#   (this downloads the font at compile time — needs internet on the build host).
+# * Hashrate arc full-scale is 10 TH/s (value = TH/s x10). Change max_value /
+#   the scale factor for larger miners.
+# =============================================================================
