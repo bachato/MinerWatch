@@ -42,6 +42,7 @@ from .miners import DRIVERS, driver_for_record
 from .poller import poller
 from .guardian import guardian, GUARDIAN_FAMILIES
 from .log_streamer import log_streamer
+from .mqtt import mqtt_publisher, test_connection as mqtt_test_connection
 from . import updater
 
 logging.basicConfig(
@@ -144,10 +145,14 @@ async def on_startup() -> None:
     # that auto-reverts on expiry. See backend/donations.py.
     await donation_controller.catch_up_on_boot()
     await donation_controller.start()
+    # Optional MQTT publisher (Home Assistant / ESPHome). Self-disables when
+    # mqtt.enabled is false or the aiomqtt dependency is missing.
+    await mqtt_publisher.start()
 
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    await mqtt_publisher.stop()
     await donation_controller.stop()
     await log_streamer.stop()
     await guardian.stop()
@@ -1338,13 +1343,19 @@ async def api_get_settings() -> dict:
     # without ever revealing the secret.
     alerts_view = asdict(cfg.alerts)
     alerts_view["telegram_token_set"] = bool(alerts_view.pop("telegram_bot_token", "").strip())
+    # MQTT view: same posture as the Telegram token — never echo the broker
+    # password back. Replace it with a boolean and expose the live connection
+    # state so the UI can show "connected" without revealing the secret.
+    mqtt_view = asdict(cfg.mqtt)
+    mqtt_view["mqtt_password_set"] = bool(mqtt_view.pop("password", "").strip())
+    mqtt_view["connected"] = mqtt_publisher.connected
     # Sanitize the raw stored map too: anything sensitive (password,
     # bot token) gets stripped here. Existing callers don't rely on
     # these specific keys being present.
     stored = {
         k: v
         for k, v in (await db.all_settings()).items()
-        if k not in {"auth.password", "alerts.telegram_bot_token"}
+        if k not in {"auth.password", "alerts.telegram_bot_token", "mqtt.password"}
     }
     return {
         "current": {
@@ -1353,6 +1364,7 @@ async def api_get_settings() -> dict:
             "storage": asdict(cfg.storage),
             "network": asdict(cfg.network),
             "auth_enabled": cfg.auth.enabled,
+            "mqtt": mqtt_view,
         },
         "stored": stored,
     }
@@ -1364,7 +1376,28 @@ async def api_post_settings(payload: SettingsPayload) -> dict:
     for key, value in payload.overrides.items():
         await db.set_setting(key, str(value))
     cfg.apply_overrides(payload.overrides)
+    # Live-apply MQTT changes by bouncing the publisher, so the user can see
+    # it connect/disconnect right after saving without restarting the app.
+    if any(k.startswith("mqtt.") for k in payload.overrides):
+        try:
+            await mqtt_publisher.stop()
+            await mqtt_publisher.start()
+        except Exception:  # noqa: BLE001
+            log.exception("failed to restart MQTT publisher after settings change")
     return {"ok": True}
+
+
+@app.post("/api/mqtt/test")
+async def api_mqtt_test() -> dict:
+    """Try connecting to the configured broker (Save first, then Test).
+
+    Mirrors /api/telegram/test: a short connect + publish that confirms the
+    broker host/credentials work, surfacing the broker's own error to the UI.
+    """
+    ok, detail = await mqtt_test_connection()
+    if not ok:
+        raise HTTPException(status_code=400, detail=detail)
+    return {"ok": True, "detail": detail}
 
 
 @app.post("/api/settings/reload")

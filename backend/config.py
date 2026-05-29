@@ -187,6 +187,44 @@ class GuardianCfg:
 
 
 @dataclass
+class MqttCfg:
+    """Optional MQTT publisher — Home Assistant discovery + flat topics.
+
+    MinerWatch is an MQTT *client*: it connects to a broker the operator
+    points it at (e.g. the Mosquitto add-on), it never runs its own. The
+    whole feature self-disables when ``enabled`` is False or the ``aiomqtt``
+    dependency is missing, mirroring the log_streamer pattern, so a missing
+    optional dep never breaks the app.
+
+    See ``docs/home-assistant-integration.md`` for the full design (topic
+    schema, discovery payloads, the ESP32/ESPHome panel, security notes).
+    """
+
+    enabled: bool = False
+    host: str = ""               # broker IP/hostname, e.g. 192.168.1.10
+    port: int = 1883
+    username: str = ""
+    password: str = ""           # stored like other secrets — see security-review.md F3
+    base_topic: str = "minerwatch"
+    discovery_prefix: str = "homeassistant"
+    qos: int = 1
+    retain: bool = True
+    # Publish Home Assistant MQTT-discovery configs so miners auto-appear
+    # as HA devices/entities. Turn off if you only consume the raw/flat
+    # topics (e.g. a standalone ESPHome panel) and don't want HA noise.
+    discovery_enabled: bool = True
+    # Also publish scalar per-field topics minerwatch/<mac>/f/<field>, handy
+    # for constrained consumers (ESP32/ESPHome) that can't parse JSON on-device.
+    publish_flat_topics: bool = False
+    # Expose write/command entities (restart/fan/frequency/voltage). OFF by
+    # default: these are destructive and interact with Guardian/auto-fan.
+    allow_controls: bool = False
+    # 0 = publish on every poll; >0 = throttle to at most once per N seconds.
+    publish_interval_s: int = 0
+    tls: bool = False            # use TLS (port is usually 8883 then)
+
+
+@dataclass
 class Config:
     server: ServerCfg = field(default_factory=ServerCfg)
     network: NetworkCfg = field(default_factory=NetworkCfg)
@@ -195,6 +233,7 @@ class Config:
     alerts: AlertsCfg = field(default_factory=AlertsCfg)
     auth: AuthCfg = field(default_factory=AuthCfg)
     guardian: GuardianCfg = field(default_factory=GuardianCfg)
+    mqtt: MqttCfg = field(default_factory=MqttCfg)
 
     @classmethod
     def load(cls) -> "Config":
@@ -213,6 +252,7 @@ class Config:
             alerts=AlertsCfg(**raw.get("alerts", {})),
             auth=AuthCfg(**raw.get("auth", {})),
             guardian=GuardianCfg(**raw.get("guardian", {})),
+            mqtt=MqttCfg(**raw.get("mqtt", {})),
         )
 
     def apply_overrides(self, overrides: dict[str, Any]) -> None:
