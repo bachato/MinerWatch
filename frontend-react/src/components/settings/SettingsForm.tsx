@@ -26,6 +26,20 @@ export interface SettingsFormState {
   scanCidr: string;
   authEnabled: boolean;
   authPassword: string; // write-only
+  // MQTT / Home Assistant
+  mqttEnabled: boolean;
+  mqttHost: string;
+  mqttPort: number;
+  mqttUsername: string;
+  mqttPassword: string; // write-only
+  mqttPasswordSet: boolean;
+  mqttBaseTopic: string;
+  mqttDiscoveryPrefix: string;
+  mqttDiscoveryEnabled: boolean;
+  mqttFlatTopics: boolean;
+  mqttAllowControls: boolean;
+  mqttTls: boolean;
+  mqttConnected: boolean; // read-only status
 }
 
 export function useSettingsForm(current: SettingsCurrent | null | undefined) {
@@ -54,6 +68,19 @@ export function useSettingsForm(current: SettingsCurrent | null | undefined) {
       scanCidr: current.network.scan_cidr,
       authEnabled: current.auth_enabled,
       authPassword: '',
+      mqttEnabled: !!current.mqtt?.enabled,
+      mqttHost: current.mqtt?.host ?? '',
+      mqttPort: current.mqtt?.port ?? 1883,
+      mqttUsername: current.mqtt?.username ?? '',
+      mqttPassword: '',
+      mqttPasswordSet: !!current.mqtt?.mqtt_password_set,
+      mqttBaseTopic: current.mqtt?.base_topic ?? 'minerwatch',
+      mqttDiscoveryPrefix: current.mqtt?.discovery_prefix ?? 'homeassistant',
+      mqttDiscoveryEnabled: current.mqtt?.discovery_enabled !== false,
+      mqttFlatTopics: !!current.mqtt?.publish_flat_topics,
+      mqttAllowControls: !!current.mqtt?.allow_controls,
+      mqttTls: !!current.mqtt?.tls,
+      mqttConnected: !!current.mqtt?.connected,
     });
   }, [current]);
 
@@ -81,8 +108,19 @@ export function formToOverrides(form: SettingsFormState): Record<string, unknown
     'alerts.telegram_chat_id': form.telegramChatId.trim(),
     'network.scan_cidr': form.scanCidr,
     'auth.enabled': form.authEnabled,
+    'mqtt.enabled': form.mqttEnabled,
+    'mqtt.host': form.mqttHost.trim(),
+    'mqtt.port': form.mqttPort,
+    'mqtt.username': form.mqttUsername.trim(),
+    'mqtt.base_topic': form.mqttBaseTopic.trim() || 'minerwatch',
+    'mqtt.discovery_prefix': form.mqttDiscoveryPrefix.trim() || 'homeassistant',
+    'mqtt.discovery_enabled': form.mqttDiscoveryEnabled,
+    'mqtt.publish_flat_topics': form.mqttFlatTopics,
+    'mqtt.allow_controls': form.mqttAllowControls,
+    'mqtt.tls': form.mqttTls,
   };
   if (form.authPassword) overrides['auth.password'] = form.authPassword;
   if (form.telegramBotToken) overrides['alerts.telegram_bot_token'] = form.telegramBotToken;
+  if (form.mqttPassword) overrides['mqtt.password'] = form.mqttPassword;
   return overrides;
 }

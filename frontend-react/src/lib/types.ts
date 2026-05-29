@@ -468,6 +468,23 @@ export interface SettingsCurrent {
     scan_timeout: number;
   };
   auth_enabled: boolean;
+  mqtt?: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    username: string;
+    base_topic: string;
+    discovery_prefix: string;
+    qos: number;
+    retain: boolean;
+    discovery_enabled: boolean;
+    publish_flat_topics: boolean;
+    allow_controls: boolean;
+    publish_interval_s: number;
+    tls: boolean;
+    mqtt_password_set?: boolean;
+    connected?: boolean;
+  };
 }
 
 export interface SettingsResponse {

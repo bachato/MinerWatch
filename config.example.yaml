@@ -51,3 +51,28 @@ auth:
   enabled: false
   # Token / password (if empty and enabled=true, it is generated on first startup).
   password: ""
+
+# Optional MQTT publisher — Home Assistant discovery + flat topics.
+# MinerWatch connects to a broker you already run (e.g. the Mosquitto
+# add-on); it never starts its own. Disabled by default; the whole feature
+# self-disables if `enabled: false` or the `aiomqtt` dependency is missing.
+# Full design: docs/home-assistant-integration.md
+mqtt:
+  enabled: false
+  host: ""                 # broker IP/hostname, e.g. 192.168.1.10
+  port: 1883
+  username: ""
+  password: ""
+  base_topic: "minerwatch"
+  discovery_prefix: "homeassistant"
+  qos: 1
+  retain: true
+  # Publish HA MQTT-discovery configs so miners auto-appear as HA devices.
+  discovery_enabled: true
+  # Also publish scalar topics minerwatch/<mac>/f/<field> for ESP32/ESPHome.
+  publish_flat_topics: false
+  # Expose restart/fan/frequency/voltage command entities (destructive — off).
+  allow_controls: false
+  # 0 = publish every poll; >0 = throttle to at most once per N seconds.
+  publish_interval_s: 0
+  tls: false               # TLS to the broker (usually port 8883)
