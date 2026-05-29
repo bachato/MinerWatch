@@ -163,6 +163,47 @@ def device_signature(rec: dict | None, sample: MinerSample | None, mac_id: str) 
     return json.dumps([blk.get("name"), blk.get("model"), blk.get("sw_version")], sort_keys=True)
 
 
+def _num(value: Any) -> float | None:
+    """Coerce to a rounded float for the compact panel feed, else None."""
+    try:
+        return None if value is None else round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str, Any]:
+    """Consolidated single-topic blob for a constrained display (ESPHome panel).
+
+    One compact JSON object, one entry per miner, with name/model resolved the
+    same way as HA discovery. Lets the panel use a SINGLE subscription and adapt
+    to the fleet automatically. Published retained to ``<base>/panel``. Keys are
+    short to keep the payload small for an ESP32: id, name, ip, model,
+    hr (TH/s), pw (W), tp (chip C), on (online bool).
+    """
+    out: list[dict[str, Any]] = []
+    for rec in miners:
+        mac_id = sanitize_mac(rec.get("mac"), rec.get("id"))
+        sample = samples.get(int(rec["id"])) if rec.get("id") is not None else None
+        dev = device_block(rec, sample, mac_id)
+        ip = (
+            getattr(sample, "host", None)
+            or rec.get("host") or rec.get("ip") or rec.get("address") or ""
+        )
+        out.append(
+            {
+                "id": mac_id,
+                "name": dev.get("name") or mac_id,
+                "ip": ip,
+                "model": dev.get("model") or "",
+                "hr": _num(getattr(sample, "hashrate_ths", None)),
+                "pw": _num(getattr(sample, "power_w", None)),
+                "tp": _num(getattr(sample, "temp_chip_c", None)),
+                "on": bool(sample and getattr(sample, "online", False)),
+            }
+        )
+    return {"miners": out}
+
+
 def _capabilities(family: str) -> Any:
     try:
         return get_driver(family)
@@ -433,6 +474,13 @@ class MqttPublisher:
                 sample = samples.get(int(rec["id"]))
                 await self._publish_one(client, cfg, rec, sample, mac_id)
             self._miners_by_mac = by_mac
+            if cfg.publish_flat_topics:
+                # Single consolidated blob for the ESPHome panel (adaptive UI).
+                await client.publish(
+                    f"{cfg.base_topic}/panel",
+                    json.dumps(panel_feed(miners, samples)),
+                    qos=cfg.qos, retain=cfg.retain,
+                )
             if cfg.discovery_enabled:
                 await self._reconcile_removed(client, cfg, set(by_mac))
         except aiomqtt.MqttError as exc:
