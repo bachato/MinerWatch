@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { GeneralTab } from '@/components/settings/GeneralTab';
 import { AlertsTab } from '@/components/settings/AlertsTab';
 import { NotificationsTab } from '@/components/settings/NotificationsTab';
+import { MqttTab } from '@/components/settings/MqttTab';
 import { SecurityTab } from '@/components/settings/SecurityTab';
 import { formToOverrides, useSettingsForm } from '@/components/settings/SettingsForm';
 import { useSaveSettings, useSettings } from '@/api/hooks';
@@ -36,7 +37,7 @@ export function SettingsPage() {
     try {
       await save.mutateAsync(formToOverrides(form));
       // Clear the secrets so they don't linger in the DOM
-      setForm({ ...form, telegramBotToken: '', authPassword: '' });
+      setForm({ ...form, telegramBotToken: '', authPassword: '', mqttPassword: '' });
       setMessage('Settings saved.');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message);
@@ -86,6 +87,7 @@ export function SettingsPage() {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="alerts">Alerts</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger value="mqtt">MQTT</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
         </TabsList>
 
@@ -97,6 +99,9 @@ export function SettingsPage() {
         </TabsContent>
         <TabsContent value="notifications" className="mt-0">
           <NotificationsTab form={form} setForm={setForm} />
+        </TabsContent>
+        <TabsContent value="mqtt" className="mt-0">
+          <MqttTab form={form} setForm={setForm} />
         </TabsContent>
         <TabsContent value="security" className="mt-0">
           <SecurityTab form={form} setForm={setForm} />

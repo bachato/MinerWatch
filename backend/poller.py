@@ -21,6 +21,7 @@ from .config import get_config
 from . import db, alerts
 from .miners import driver_for_record
 from .miners.base import MinerSample
+from .mqtt import mqtt_publisher
 
 log = logging.getLogger("minerwatch.poller")
 
@@ -143,6 +144,13 @@ class Poller:
 
         # Evaluate alerts after we've saved everything
         await alerts.evaluate(out)
+
+        # Publish to MQTT (Home Assistant / ESPHome). No-op unless enabled
+        # and connected; defensive so a broker hiccup never breaks polling.
+        try:
+            await mqtt_publisher.publish_fleet(miners, out)
+        except Exception:  # noqa: BLE001
+            log.debug("mqtt publish skipped", exc_info=True)
 
         self._last_results = out
         return out

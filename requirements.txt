@@ -13,3 +13,7 @@ pywebpush==2.0.0
 cryptography==43.0.1
 jinja2==3.1.4
 psutil==6.0.0
+# Async MQTT client for the optional Home Assistant / ESPHome publisher
+# (backend/mqtt.py). Optional at runtime: the publisher self-disables if
+# this import fails, so an install without it still runs fine.
+aiomqtt==2.5.1
