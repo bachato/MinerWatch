@@ -377,7 +377,7 @@ from a new **Settings → MQTT / Home Assistant** tab:
 ```yaml
 mqtt:
   enabled: false
-  host: ""                 # e.g. 192.168.1.10 (the Mosquitto add-on)
+  host: ""                 # e.g. localhost (or the Mosquitto add-on's IP)
   port: 1883
   username: ""
   password: ""             # see security note below
@@ -479,7 +479,7 @@ wifi:
 
 # Talk straight to the broker MinerWatch publishes to.
 mqtt:
-  broker: 192.168.1.10
+  broker: localhost
   username: !secret mqtt_user
   password: !secret mqtt_pass
 

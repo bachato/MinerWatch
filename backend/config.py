@@ -201,7 +201,7 @@ class MqttCfg:
     """
 
     enabled: bool = False
-    host: str = ""               # broker IP/hostname, e.g. 192.168.1.10
+    host: str = ""               # broker IP/hostname, e.g. localhost
     port: int = 1883
     username: str = ""
     password: str = ""           # stored like other secrets — see security-review.md F3
