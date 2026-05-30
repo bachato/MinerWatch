@@ -35,7 +35,7 @@ def test_num_coercion() -> None:
 
 def test_panel_feed_shape_names_and_values() -> None:
     miners = [
-        {"id": 1, "mac": "E0:E1:A9:3F:0C:BF", "name": "Avalon Q"},
+        {"id": 1, "mac": "DE:AD:BE:EF:12:34", "name": "Avalon Q"},
         {"id": 2, "mac": "AA:BB:CC:DD:EE:FF"},  # no rec name -> hostname fallback
     ]
     samples = {
@@ -49,7 +49,7 @@ def test_panel_feed_shape_names_and_values() -> None:
     assert len(rows) == 2
 
     a = rows[0]
-    assert a["id"] == "e0e1a93f0cbf"          # sanitized MAC
+    assert a["id"] == "deadbeef1234"          # sanitized MAC
     assert a["name"] == "Avalon Q"            # from the DB record
     assert a["ip"] == "10.0.0.11"             # sample.host
     assert a["model"] == "Avalon Nano 3"

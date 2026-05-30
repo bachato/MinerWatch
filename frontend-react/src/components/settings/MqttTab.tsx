@@ -92,7 +92,7 @@ export function MqttTab({ form, setForm }: Props) {
             <Input
               id="mqtt.host"
               type="text"
-              placeholder="e.g. 192.168.1.10"
+              placeholder="e.g. localhost"
               autoComplete="off"
               value={form.mqttHost}
               onChange={(e) => setForm({ ...form, mqttHost: e.target.value })}
