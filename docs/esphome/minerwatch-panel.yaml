@@ -58,6 +58,14 @@ wifi:
 
 captive_portal:
 
+# This ESP32 panel's own IP — shown in the header (handy for OTA / settings).
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      id: ip_addr
+      on_value:
+        - script.execute: refresh_view
+
 # =============================================================================
 # MQTT — single consolidated feed drives the whole UI.
 # =============================================================================
@@ -173,7 +181,7 @@ script:
   - id: refresh_view
     then:
       - lambda: |-
-          char buf[64];
+          char buf[96];
           int n = id(g_count);
 
           // Build a recoloured "Asics <t> C | VR <t> C" string (per-value zone
@@ -194,7 +202,8 @@ script:
               if (id(g_hr)[j] > 0) tot += id(g_hr)[j];
               if (id(g_on)[j]) onc++;
             }
-            snprintf(buf, sizeof(buf), "#4DD0C4 MinerWatch#   |   %.1f TH/s Total   |   %d/%d", tot, onc, n);
+            snprintf(buf, sizeof(buf), "#4DD0C4 MinerWatch# | %.1f TH/s | %d/%d | %s",
+                     tot, onc, n, id(ip_addr).state.c_str());
             lv_label_set_text(id(ov_header), buf);
           }
 
@@ -360,8 +369,8 @@ lvgl:
         - label:
             id: ov_header
             align: TOP_MID
-            y: 9
-            text_font: montserrat_18
+            y: 10
+            text_font: montserrat_16
             text_color: 0xFFFFFF
             recolor: true
             text: "MinerWatch"
