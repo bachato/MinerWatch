@@ -428,13 +428,45 @@ def _rsync_swap(src: Path, dst: Path) -> None:
             os.replace(tmp, dst_file)
 
 
+async def _install_requirements(reqs_file: Path) -> bool:
+    """Install ``requirements.txt`` into the running interpreter's environment.
+
+    Used by the self-update flow when dependencies change, so a new dep (e.g.
+    ``aiomqtt``) is present even if the relaunch is a uvicorn ``--reload``
+    worker respawn that never re-runs ``start.sh``. Best-effort: returns
+    ``True`` on success, ``False`` (logged) on any failure — the caller still
+    restarts and ``start.sh`` retries pip on relaunch.
+    """
+    _log_to_file("requirements.txt changed — installing dependencies…")
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", "-r", str(reqs_file),
+            cwd=str(ROOT_DIR),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        out, _ = await proc.communicate()
+        for line in (out or b"").decode("utf-8", "replace").splitlines()[-10:]:
+            _log_to_file(f"  pip: {line}")
+        if proc.returncode != 0:
+            _log_to_file(f"Dependency install FAILED (pip exit {proc.returncode})")
+            return False
+        _log_to_file("Dependencies installed")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        _log_to_file(f"Dependency install error: {exc}")
+        return False
+
+
 async def install_update() -> Dict[str, Any]:
     """Full install flow. Raises :class:`UpdateError` on any step.
 
-    On success, returns a dict with the new version and schedules a
-    process exit (delayed 1.5s so the API response can flush to the
-    frontend). launchd/systemd relaunch us; ``start.sh`` reruns ``pip
-    install -r requirements.txt`` to pick up any new dependencies.
+    On success, returns a dict with the new version and schedules a process
+    exit (delayed 1.5s so the API response can flush to the frontend). If
+    requirements.txt changed, we install the new deps in *this* process first
+    so a uvicorn ``--reload`` worker respawn still has them; launchd/systemd
+    then relaunch us via ``start.sh``, which also reruns ``pip install`` as a
+    backstop.
     """
     _ensure_log()
     _log_to_file("=" * 60)
@@ -484,9 +516,22 @@ async def install_update() -> Dict[str, Any]:
     src_root = _find_extracted_root(extract_dir)
     _log_to_file(f"Extracted to {src_root}")
 
-    # 6. Swap files into the runtime dir, preserving user state.
+    # 6. Swap files into the runtime dir, preserving user state. Capture the
+    # requirements hash first so we can detect a dependency change post-swap.
+    reqs_file = ROOT_DIR / "requirements.txt"
+    old_reqs_hash = _sha256_file(reqs_file) if reqs_file.exists() else ""
     _rsync_swap(src_root, ROOT_DIR)
     _log_to_file("File swap complete")
+
+    # 6c. If requirements.txt changed, install the new deps NOW into the venv
+    # we're running under, so they're present even when the relaunch is a
+    # uvicorn --reload worker respawn that never re-runs start.sh's pip step.
+    # Best-effort: a failure is logged + flagged; start.sh retries on relaunch.
+    deps_changed = False
+    deps_ok = True
+    if reqs_file.exists() and _sha256_file(reqs_file) != old_reqs_hash:
+        deps_changed = True
+        deps_ok = await _install_requirements(reqs_file)
 
     # 6b. Stamp the new dist/ with the installed version. The frontend
     # auto-heal in start.sh keys off this file: if missing or
@@ -519,6 +564,8 @@ async def install_update() -> Dict[str, Any]:
         "previous_version": info.current,
         "new_version": new_version,
         "requires_service_reinstall": info.requires_service_reinstall,
+        "dependencies_updated": deps_changed and deps_ok,
+        "dependencies_warning": deps_changed and not deps_ok,
     }
 
 
