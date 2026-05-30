@@ -178,7 +178,7 @@ def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str,
     same way as HA discovery. Lets the panel use a SINGLE subscription and adapt
     to the fleet automatically. Published retained to ``<base>/panel``. Keys are
     short to keep the payload small for an ESP32: id, name, ip, model,
-    hr (TH/s), pw (W), tp (chip C), on (online bool).
+    hr (TH/s), pw (W), tp (chip C), vr (VR C), on (online bool).
     """
     out: list[dict[str, Any]] = []
     for rec in miners:
@@ -198,6 +198,7 @@ def panel_feed(miners: list[dict], samples: dict[int, MinerSample]) -> dict[str,
                 "hr": _num(getattr(sample, "hashrate_ths", None)),
                 "pw": _num(getattr(sample, "power_w", None)),
                 "tp": _num(getattr(sample, "temp_chip_c", None)),
+                "vr": _num(getattr(sample, "temp_vr_c", None)),
                 "on": bool(sample and getattr(sample, "online", False)),
             }
         )

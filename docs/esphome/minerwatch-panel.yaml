@@ -76,6 +76,7 @@ mqtt:
               id(g_hr)[n]   = m["hr"] | 0.0f;
               id(g_pw)[n]   = m["pw"] | 0.0f;
               id(g_tp)[n]   = m["tp"] | 0.0f;
+              id(g_vr)[n]   = m["vr"] | -1.0f;   // <0 = miner doesn't report VR
               id(g_on)[n]   = m["on"] | false;
               n++;
             }
@@ -113,6 +114,9 @@ globals:
     type: float[16]
     restore_value: no
   - id: g_tp
+    type: float[16]
+    restore_value: no
+  - id: g_vr
     type: float[16]
     restore_value: no
   - id: g_on
@@ -169,8 +173,30 @@ script:
   - id: refresh_view
     then:
       - lambda: |-
-          char buf[28];
+          char buf[64];
           int n = id(g_count);
+
+          // Build a recoloured "Asics <t> C | VR <t> C" string (per-value zone
+          // colours). ASIC bands 60/65/70, VR bands 65/73/80; <=0 / <0 = no data.
+          auto fmt_temps = [&](int kk, char* out, int sz) {
+            float a = id(g_tp)[kk], v = id(g_vr)[kk];
+            const char* ac = (a <= 0) ? "9AA0A6" : (a >= 70) ? "E01B24" : (a >= 65) ? "E8862E" : (a >= 60) ? "E6C229" : "33D17A";
+            const char* vc = (v < 0)  ? "9AA0A6" : (v >= 80) ? "E01B24" : (v >= 73) ? "E8862E" : (v >= 65) ? "E6C229" : "33D17A";
+            char ab[8], vb[8];
+            if (a <= 0) snprintf(ab, sizeof(ab), "--"); else snprintf(ab, sizeof(ab), "%.0f C", a);
+            if (v < 0)  snprintf(vb, sizeof(vb), "--"); else snprintf(vb, sizeof(vb), "%.0f C", v);
+            snprintf(out, sz, "Asics #%s %s#  |  VR #%s %s#", ac, ab, vc, vb);
+          };
+
+          // ---------------- HEADER:  MinerWatch | xx TH/s Total | X/Y ----------
+          { float tot = 0; int onc = 0;
+            for (int j = 0; j < n; j++) {
+              if (id(g_hr)[j] > 0) tot += id(g_hr)[j];
+              if (id(g_on)[j]) onc++;
+            }
+            snprintf(buf, sizeof(buf), "#4DD0C4 MinerWatch#   |   %.1f TH/s Total   |   %d/%d", tot, onc, n);
+            lv_label_set_text(id(ov_header), buf);
+          }
 
           // ---------------- DETAIL (single miner) ----------------
           if (n == 0) {
@@ -179,6 +205,7 @@ script:
             lv_label_set_text(id(d_status), "");
             lv_label_set_text(id(d_hr), "--");
             lv_label_set_text(id(d_tp), "--");
+            lv_label_set_text(id(d_vr), "VR --");
             lv_label_set_text(id(d_pw), "-- W");
             lv_arc_set_value(id(d_arc_hr), 0);
             lv_arc_set_value(id(d_arc_tp), 0);
@@ -190,12 +217,43 @@ script:
             lv_label_set_text(id(d_ip), id(g_ip)[i].c_str());
             snprintf(buf, sizeof(buf), "%.1f", id(g_hr)[i]);
             lv_label_set_text(id(d_hr), buf);
-            snprintf(buf, sizeof(buf), "%.0f", id(g_tp)[i]);
-            lv_label_set_text(id(d_tp), buf);
             snprintf(buf, sizeof(buf), "%.0f W", id(g_pw)[i]);
             lv_label_set_text(id(d_pw), buf);
             lv_arc_set_value(id(d_arc_hr), (int) (id(g_hr)[i] * 10.0f));
-            lv_arc_set_value(id(d_arc_tp), (int) (id(g_tp)[i]));
+
+            // ASIC chip temp: value text + arc indicator coloured by zone
+            //   green <60 | yellow 60-64 | orange 65-69 | red >=70
+            float at = id(g_tp)[i];
+            lv_arc_set_value(id(d_arc_tp), (int) at);
+            if (at <= 0) {
+              lv_label_set_text(id(d_tp), "--");
+              lv_obj_set_style_text_color(id(d_tp), lv_color_hex(0x9AA0A6), 0);
+              lv_obj_set_style_arc_color(id(d_arc_tp), lv_color_hex(0x2A2E37), LV_PART_INDICATOR);
+            } else {
+              lv_color_t ac = (at >= 70) ? lv_color_hex(0xE01B24)
+                            : (at >= 65) ? lv_color_hex(0xE8862E)
+                            : (at >= 60) ? lv_color_hex(0xE6C229)
+                            :              lv_color_hex(0x33D17A);
+              snprintf(buf, sizeof(buf), "%.0f C", at);
+              lv_label_set_text(id(d_tp), buf);
+              lv_obj_set_style_text_color(id(d_tp), ac, 0);
+              lv_obj_set_style_arc_color(id(d_arc_tp), ac, LV_PART_INDICATOR);
+            }
+            // VR temp: same idea, higher bands (green <65 | yellow 65-72 | orange 73-79 | red >=80)
+            //   <0 = this miner doesn't report a VR sensor
+            float vt = id(g_vr)[i];
+            if (vt < 0) {
+              lv_label_set_text(id(d_vr), "VR --");
+              lv_obj_set_style_text_color(id(d_vr), lv_color_hex(0x9AA0A6), 0);
+            } else {
+              lv_color_t vc = (vt >= 80) ? lv_color_hex(0xE01B24)
+                            : (vt >= 73) ? lv_color_hex(0xE8862E)
+                            : (vt >= 65) ? lv_color_hex(0xE6C229)
+                            :              lv_color_hex(0x33D17A);
+              snprintf(buf, sizeof(buf), "VR %.0f C", vt);
+              lv_label_set_text(id(d_vr), buf);
+              lv_obj_set_style_text_color(id(d_vr), vc, 0);
+            }
             if (id(g_on)[i]) {
               lv_label_set_text(id(d_status), "ONLINE");
               lv_obj_set_style_text_color(id(d_status), lv_color_hex(0x33D17A), 0);
@@ -242,7 +300,7 @@ script:
               lv_label_set_text(id(ov_name0), id(g_name)[k].c_str());
               snprintf(buf, sizeof(buf), "%.1f TH/s", id(g_hr)[k]);
               lv_label_set_text(id(ov_hr0), buf);
-              snprintf(buf, sizeof(buf), "%.0f C", id(g_tp)[k]);
+              fmt_temps(k, buf, sizeof(buf));
               lv_label_set_text(id(ov_tp0), buf);
               lv_obj_set_style_bg_color(id(ov_dot0), id(g_on)[k] ? lv_color_hex(0x33D17A) : lv_color_hex(0xE01B24), 0);
             } else { lv_obj_add_flag(id(ov_card0), LV_OBJ_FLAG_HIDDEN); }
@@ -254,7 +312,7 @@ script:
               lv_label_set_text(id(ov_name1), id(g_name)[k].c_str());
               snprintf(buf, sizeof(buf), "%.1f TH/s", id(g_hr)[k]);
               lv_label_set_text(id(ov_hr1), buf);
-              snprintf(buf, sizeof(buf), "%.0f C", id(g_tp)[k]);
+              fmt_temps(k, buf, sizeof(buf));
               lv_label_set_text(id(ov_tp1), buf);
               lv_obj_set_style_bg_color(id(ov_dot1), id(g_on)[k] ? lv_color_hex(0x33D17A) : lv_color_hex(0xE01B24), 0);
             } else { lv_obj_add_flag(id(ov_card1), LV_OBJ_FLAG_HIDDEN); }
@@ -266,7 +324,7 @@ script:
               lv_label_set_text(id(ov_name2), id(g_name)[k].c_str());
               snprintf(buf, sizeof(buf), "%.1f TH/s", id(g_hr)[k]);
               lv_label_set_text(id(ov_hr2), buf);
-              snprintf(buf, sizeof(buf), "%.0f C", id(g_tp)[k]);
+              fmt_temps(k, buf, sizeof(buf));
               lv_label_set_text(id(ov_tp2), buf);
               lv_obj_set_style_bg_color(id(ov_dot2), id(g_on)[k] ? lv_color_hex(0x33D17A) : lv_color_hex(0xE01B24), 0);
             } else { lv_obj_add_flag(id(ov_card2), LV_OBJ_FLAG_HIDDEN); }
@@ -278,7 +336,7 @@ script:
               lv_label_set_text(id(ov_name3), id(g_name)[k].c_str());
               snprintf(buf, sizeof(buf), "%.1f TH/s", id(g_hr)[k]);
               lv_label_set_text(id(ov_hr3), buf);
-              snprintf(buf, sizeof(buf), "%.0f C", id(g_tp)[k]);
+              fmt_temps(k, buf, sizeof(buf));
               lv_label_set_text(id(ov_tp3), buf);
               lv_obj_set_style_bg_color(id(ov_dot3), id(g_on)[k] ? lv_color_hex(0x33D17A) : lv_color_hex(0xE01B24), 0);
             } else { lv_obj_add_flag(id(ov_card3), LV_OBJ_FLAG_HIDDEN); }
@@ -298,13 +356,15 @@ lvgl:
       bg_color: 0x0F1419
       bg_opa: COVER
       widgets:
+        # header:  MinerWatch | xx TH/s Total | X/Y  (text built in refresh_view)
         - label:
-            align: TOP_LEFT
-            x: 12
-            y: 7
+            id: ov_header
+            align: TOP_MID
+            y: 9
             text_font: montserrat_18
-            text_color: 0x4DD0C4
-            text: "MINERWATCH"
+            text_color: 0xFFFFFF
+            recolor: true
+            text: "MinerWatch"
 
         - label:
             id: ov_empty
@@ -329,7 +389,7 @@ lvgl:
               - label: { id: ov_name0, align: TOP_LEFT, x: 10, y: 8, text_font: montserrat_16, text_color: 0xFFFFFF, text: "-" }
               - obj:   { id: ov_dot0, align: TOP_RIGHT, x: -10, y: 10, width: 14, height: 14, radius: 7, bg_opa: COVER, bg_color: 0x9AA0A6, border_width: 0 }
               - label: { id: ov_hr0, align: LEFT_MID, x: 10, y: 4, text_font: montserrat_22, text_color: 0xFFFFFF, text: "-" }
-              - label: { id: ov_tp0, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, text: "-" }
+              - label: { id: ov_tp0, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, recolor: true, text: "-" }
             on_release:
               - lambda: |-
                   int pages = (id(g_count) + 3) / 4; if (pages < 1) pages = 1;
@@ -353,7 +413,7 @@ lvgl:
               - label: { id: ov_name1, align: TOP_LEFT, x: 10, y: 8, text_font: montserrat_16, text_color: 0xFFFFFF, text: "-" }
               - obj:   { id: ov_dot1, align: TOP_RIGHT, x: -10, y: 10, width: 14, height: 14, radius: 7, bg_opa: COVER, bg_color: 0x9AA0A6, border_width: 0 }
               - label: { id: ov_hr1, align: LEFT_MID, x: 10, y: 4, text_font: montserrat_22, text_color: 0xFFFFFF, text: "-" }
-              - label: { id: ov_tp1, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, text: "-" }
+              - label: { id: ov_tp1, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, recolor: true, text: "-" }
             on_release:
               - lambda: |-
                   int pages = (id(g_count) + 3) / 4; if (pages < 1) pages = 1;
@@ -377,7 +437,7 @@ lvgl:
               - label: { id: ov_name2, align: TOP_LEFT, x: 10, y: 8, text_font: montserrat_16, text_color: 0xFFFFFF, text: "-" }
               - obj:   { id: ov_dot2, align: TOP_RIGHT, x: -10, y: 10, width: 14, height: 14, radius: 7, bg_opa: COVER, bg_color: 0x9AA0A6, border_width: 0 }
               - label: { id: ov_hr2, align: LEFT_MID, x: 10, y: 4, text_font: montserrat_22, text_color: 0xFFFFFF, text: "-" }
-              - label: { id: ov_tp2, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, text: "-" }
+              - label: { id: ov_tp2, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, recolor: true, text: "-" }
             on_release:
               - lambda: |-
                   int pages = (id(g_count) + 3) / 4; if (pages < 1) pages = 1;
@@ -401,7 +461,7 @@ lvgl:
               - label: { id: ov_name3, align: TOP_LEFT, x: 10, y: 8, text_font: montserrat_16, text_color: 0xFFFFFF, text: "-" }
               - obj:   { id: ov_dot3, align: TOP_RIGHT, x: -10, y: 10, width: 14, height: 14, radius: 7, bg_opa: COVER, bg_color: 0x9AA0A6, border_width: 0 }
               - label: { id: ov_hr3, align: LEFT_MID, x: 10, y: 4, text_font: montserrat_22, text_color: 0xFFFFFF, text: "-" }
-              - label: { id: ov_tp3, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, text: "-" }
+              - label: { id: ov_tp3, align: BOTTOM_LEFT, x: 10, y: -8, text_font: montserrat_14, text_color: 0x9AA0A6, recolor: true, text: "-" }
             on_release:
               - lambda: |-
                   int pages = (id(g_count) + 3) / 4; if (pages < 1) pages = 1;
@@ -553,9 +613,9 @@ lvgl:
               arc_color: 0xE8A33D
               arc_width: 14
             widgets:
-              - label: { align: CENTER, y: -44, text_font: montserrat_14, text_color: 0x9AA0A6, text: "CHIP TEMP" }
-              - label: { id: d_tp, align: CENTER, y: -4, text_font: montserrat_34, text_color: 0xFFFFFF, text: "-" }
-              - label: { align: CENTER, y: 30, text_font: montserrat_14, text_color: 0x9AA0A6, text: "C" }
+              - label: { align: CENTER, y: -46, text_font: montserrat_14, text_color: 0x9AA0A6, text: "ASIC" }
+              - label: { id: d_tp, align: CENTER, y: -10, text_font: montserrat_30, text_color: 0xFFFFFF, text: "-" }
+              - label: { id: d_vr, align: CENTER, y: 32, text_font: montserrat_16, text_color: 0x9AA0A6, text: "VR -" }
 
         # Power readout
         - label:
