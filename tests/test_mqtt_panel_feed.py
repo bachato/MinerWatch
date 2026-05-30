@@ -40,7 +40,7 @@ def test_panel_feed_shape_names_and_values() -> None:
     ]
     samples = {
         1: _sample(host="10.0.0.11", online=True, model="Avalon Nano 3",
-                   hashrate_ths=4.9, power_w=95.0, temp_chip_c=62.0),
+                   hashrate_ths=4.9, power_w=95.0, temp_chip_c=62.0, temp_vr_c=70.0),
         2: _sample(host="10.0.0.12", online=False, hostname="bitaxe-2"),
     }
     feed = panel_feed(miners, samples)
@@ -53,7 +53,7 @@ def test_panel_feed_shape_names_and_values() -> None:
     assert a["name"] == "Avalon Q"            # from the DB record
     assert a["ip"] == "10.0.0.11"             # sample.host
     assert a["model"] == "Avalon Nano 3"
-    assert (a["hr"], a["pw"], a["tp"]) == (4.9, 95.0, 62.0)
+    assert (a["hr"], a["pw"], a["tp"], a["vr"]) == (4.9, 95.0, 62.0, 70.0)
     assert a["on"] is True
 
     b = rows[1]
@@ -62,6 +62,7 @@ def test_panel_feed_shape_names_and_values() -> None:
     assert b["ip"] == "10.0.0.12"
     assert b["on"] is False
     assert b["hr"] is None                    # offline / no data -> null
+    assert b["vr"] is None                    # VR not reported -> null
 
     # Must be JSON-serialisable (exactly what the publisher does).
     assert json.loads(json.dumps(feed)) == feed
