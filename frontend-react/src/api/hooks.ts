@@ -329,6 +329,13 @@ export function useTelegramTest() {
   });
 }
 
+export function useMqttTest() {
+  return useMutation({
+    mutationFn: () =>
+      api<{ ok: true; detail?: string }>('/api/mqtt/test', { method: 'POST' }),
+  });
+}
+
 export function useTelegramDiscover() {
   return useMutation({
     mutationFn: () =>
