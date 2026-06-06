@@ -575,6 +575,12 @@ export interface GuardianLive {
   temp_source: 'vr' | 'chip';
   vr_temp_c: number | null;
   reject_pct: number | null;
+  // Effective hashrate + ASIC hardware-error signals behind the regression
+  // brake; soft_ceiling_mhz is the in-memory cap pinned after a regression.
+  hashrate_ths: number | null;
+  asic_errors: number | null;
+  asic_error_delta: number | null;
+  soft_ceiling_mhz: number | null;
   reason: string;
   changed: boolean;
   ts: number;
@@ -590,6 +596,7 @@ export interface GuardianDefaults {
   chip_low_c: number;
   watchdog_c: number;      // 75°C chip overheat watchdog (chip-mode upper bound)
   reject_pct_max: number;
+  hashrate_drop_pct: number;
   step_down_vr_mhz: number;
   step_down_err_mhz: number;
   step_up_mhz: number;

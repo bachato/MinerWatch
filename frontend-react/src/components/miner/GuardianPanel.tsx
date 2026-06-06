@@ -129,6 +129,15 @@ export function GuardianPanel({ data }: Props) {
   const highC = typeof maxTemp === 'number' ? maxTemp : defHighFor(source);
   const lowC = Math.round((highC - deadbandFor(source)) * 10) / 10;
   const liveTemp = s.live?.temp_c ?? s.live?.vr_temp_c ?? null;
+  const liveErr =
+    s.live?.asic_errors == null
+      ? '—'
+      : `${s.live.asic_errors}${
+          s.live.asic_error_delta ? ` (+${s.live.asic_error_delta})` : ''
+        }`;
+  const softCeil = s.live?.soft_ceiling_mhz ?? null;
+  const softCapped =
+    softCeil != null && s.max_freq_mhz != null && softCeil < s.max_freq_mhz;
 
   async function run(
     payload: {
@@ -385,7 +394,9 @@ export function GuardianPanel({ data }: Props) {
             {srcLabel} &gt; {highC}°C → −{d.step_down_vr_mhz} MHz · Rejected
             shares &gt; {d.reject_pct_max}% → −{d.step_down_err_mhz} MHz ·{' '}
             {srcLabel} &lt; {lowC}°C → +{d.step_up_mhz} MHz (up to your max).
-            Otherwise it holds.
+            Otherwise it holds. It also backs off if effective hashrate falls
+            more than {Math.round(d.hashrate_drop_pct * 100)}% below this chip's
+            best at the same frequency (ASIC instability).
           </p>
         </div>
 
@@ -394,11 +405,19 @@ export function GuardianPanel({ data }: Props) {
           <p className="text-sm font-semibold">Live</p>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
             <Stat label="Frequency" value={fmt(s.live?.frequency_mhz ?? currentFreq, 'MHz')} />
+            <Stat label="Hashrate" value={fmt(s.live?.hashrate_ths ?? null, 'TH/s')} />
             <Stat label={`${srcLabel} temp`} value={fmt(liveTemp, '°C')} />
             <Stat label="Reject" value={fmt(s.live?.reject_pct ?? null, '%')} />
+            <Stat label="ASIC errors" value={liveErr} />
             <Stat label="Ceiling" value={fmt(s.live?.ceiling_mhz ?? s.max_freq_mhz, 'MHz')} />
             <Stat label="Floor" value={fmt(s.live?.floor_mhz ?? s.freq_floor_mhz, 'MHz')} />
           </div>
+          {softCapped && (
+            <p className="text-xs text-amber-400">
+              Capped to {softCeil} MHz after an effective-hashrate drop (below
+              your max). Disable and re-enable the Guardian to re-probe.
+            </p>
+          )}
           {s.live?.reason && (
             <p className="text-xs text-muted-foreground">
               Last decision: {s.live.reason}

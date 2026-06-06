@@ -209,6 +209,52 @@ def test_temp_band_picks_source_defaults():
     assert cfg.temp_band("bogus") == (cfg.vr_high_c, cfg.vr_low_c)
 
 
+# ---- hashrate-regression brake ---------------------------------------------
+
+def test_hashrate_regression_steps_down_even_when_cool():
+    # VR cool (would want +10) but effective hashrate regressed → back off.
+    target, reason = decide(
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_regressed=True
+    )
+    assert target == 530  # -step_down_temp_mhz (the hr step defaults to it)
+    assert "hashrate" in reason
+
+
+def test_hashrate_regression_uses_its_own_step():
+    target, _ = decide(
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0,
+        hashrate_regressed=True, step_down_hr_mhz=30,
+    )
+    assert target == 520
+
+
+def test_temp_hot_beats_regression():
+    # Both a temperature cut and a regression apply → temperature wins.
+    target, reason = decide(
+        current_freq=550, temp_c=80.0, hw_error_pct=0.0,
+        hashrate_regressed=True, step_down_hr_mhz=40,
+    )
+    assert target == 530  # -20 temp, not -40 hr
+    assert "°C" in reason
+
+
+def test_regression_beats_reject_and_recovery():
+    # Regression outranks the reject term and the cool-source recovery.
+    target, reason = decide(
+        current_freq=550, temp_c=60.0, hw_error_pct=9.9, hashrate_regressed=True
+    )
+    assert target == 530
+    assert "hashrate" in reason
+
+
+def test_no_regression_keeps_recovering():
+    # Sanity: with regression off and VR cool, recovery still steps up.
+    target, _ = decide(
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_regressed=False
+    )
+    assert target == 560
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failures = 0

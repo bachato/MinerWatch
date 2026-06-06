@@ -171,6 +171,23 @@ class GuardianCfg:
     step_down_err_mhz: int = 10
     step_up_mhz: int = 10
 
+    # ---- Instability brake: effective-hashrate regression. ----
+    # The reject-% term only catches POOL rejects; it misses ASIC hardware
+    # errors (invalid nonces) that crater *effective* hashrate without ever
+    # being submitted to the pool. Worse, an unstable chip does less real work,
+    # draws less power and runs COOLER, which the recovery branch reads as "more
+    # headroom" and pushes frequency even higher — a runaway. This brake closes
+    # that gap by watching effective hashrate against the best this chip has
+    # proven it can sustain: if it falls this fraction below that peak at an
+    # equal-or-higher frequency, the chip is unstable → step down and pin a soft
+    # ceiling just below, so the recovery branch can't climb back into it.
+    hashrate_drop_pct: float = 0.15
+    step_down_hashrate_mhz: int = 20
+    # Ignore the hashrate reading for this long after a frequency change: AxeOS
+    # reports an EWMA that lags a minute or two, so comparing too soon would
+    # misread the settling lag as a regression and throttle needlessly.
+    hashrate_settle_seconds: int = 120
+
     # Hard frequency floor (MHz): the governor never throttles below this,
     # so a runaway down-spiral can't drive a miner into uselessness. A
     # per-miner ``guardian_freq_floor_mhz`` overrides this when set.
