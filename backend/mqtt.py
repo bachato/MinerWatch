@@ -25,7 +25,7 @@ import time
 from typing import Any
 
 from . import btc_price
-from .ambient_temp import AmbientTemp
+from .ambient_temp import AmbientSnapshot, AmbientTemp
 from .config import get_config
 from .miners import driver_for_record, get_driver
 from .miners.base import MinerSample
@@ -414,6 +414,16 @@ class MqttPublisher:
     @property
     def connected(self) -> bool:
         return self._client is not None
+
+    def ambient_snapshot(self) -> AmbientSnapshot:
+        """Current ambient-temperature reading for the HTTP API.
+
+        Exposes the same value the panel feed ships over MQTT so the web
+        dashboard and the ESP32 panel agree. Always safe to call: when the
+        relay is disabled or no sensor has reported yet, ``has_data`` is
+        False and the dashboard hides the card.
+        """
+        return self._ambient.snapshot()
 
     # ---- connection loop ----
 

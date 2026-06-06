@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.6] — 2026-06-06
+
+### Added
+
+- **Ambient temperature on the dashboard.** The home page now shows the ambient
+  temperature relayed from the optional MQTT sensor — the same current/min/max
+  reading, texts and colour scale (blue→red gradient for the current value, light
+  blue Min, red Max) as the ESP32 panel's bottom row, in a full-width card near
+  the top of the dashboard. It appears only when the relay has data, so installs
+  without an ambient sensor are unaffected. Backed by a new
+  `GET /api/fleet/ambient_temp` endpoint.
+
 ## [1.10.5] — 2026-06-06
 
 ### Fixed

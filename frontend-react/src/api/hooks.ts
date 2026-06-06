@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
   AlertsResponse,
+  AmbientTemp,
   AuthStatus,
   BestRecordsResponse,
   BestRecordsTopResponse,
@@ -147,6 +148,18 @@ export function useBlockFinds() {
     queryFn: ({ signal }) =>
       api<BlockFindsResponse>('/api/fleet/block_finds', { signal }),
     refetchInterval: 30_000, // block finds are rare, no need to hammer
+  });
+}
+
+// Ambient temperature relayed from the optional MQTT sensor — same value
+// the ESP32 panel shows. Polled at the standard 5s fleet cadence; the
+// backend read is a cheap in-memory snapshot.
+export function useAmbientTemp() {
+  return useQuery({
+    queryKey: ['fleet-ambient-temp'],
+    queryFn: ({ signal }) =>
+      api<AmbientTemp>('/api/fleet/ambient_temp', { signal }),
+    refetchInterval: FIVE_SECONDS,
   });
 }
 
