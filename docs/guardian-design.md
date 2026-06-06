@@ -48,11 +48,18 @@ raffredda sia il VR sia il chip → il PID ventola rallenta.
 Valutata una volta ogni `interval_seconds` per ciascun miner abilitato:
 
 ```
-VR temp   > vr_high_c         → frequenza − step_down_vr_mhz    (sicurezza)
-reject %  > reject_pct_max    → frequenza − step_down_err_mhz   (sicurezza)
-VR temp   < vr_low_c          → frequenza + step_up_mhz         (recupero)
+temp      > high              → frequenza − step_down_vr_mhz      (sicurezza)
+hashrate regredito            → frequenza − step_down_hashrate_mhz (sicurezza)
+reject %  > reject_pct_max    → frequenza − step_down_err_mhz     (sicurezza)
+temp      < low               → frequenza + step_up_mhz           (recupero)
 altrimenti (banda morta)      → hold
 ```
+
+La sorgente `temp` è VR (default) o chip per-miner; `high`/`low` sono le soglie
+della sorgente (vedi §6). Il termine **hashrate regredito** (aggiunto in 1.10.5)
+è il freno all'instabilità: l'hashrate efficace è caduto oltre `hashrate_drop_pct`
+sotto il meglio che quel chip ha dimostrato di reggere a una frequenza pari o
+superiore. Vedi §3.1.
 
 Valori di default (`GuardianCfg`, tarati sul campo): `vr_high_c=70`,
 `vr_low_c=65` (banda morta = isteresi che evita l'oscillazione al bordo),
@@ -96,7 +103,34 @@ reject rate non ha questo problema: contatori monotòni veri, nella scala giusta
 tuning one-shot, perché un governor a runtime deve tollerare più rumore prima di
 reagire.
 
-## 4. Perché la cadenza è la manopola di sicurezza
+### 3.1 Il freno anti-regressione dell'hashrate (1.10.5)
+
+Il reject rate cattura solo le share rifiutate **dal pool**. Ma il sintomo tipico
+di un overclock spinto troppo è l'**errore hardware dell'ASIC** (nonce invalidi):
+quei nonce falliscono il controllo di difficoltà in locale e **non vengono mai
+inviati al pool**, quindi affossano l'hashrate *efficace* senza alzare il reject
+%. Peggio: il chip instabile fa meno lavoro reale, assorbe meno watt e scalda
+meno → il ramo di recupero legge "più margine termico" e **alza ancora** la
+frequenza. Risultato osservato sul campo (Gamma): l'hashrate reale crollava
+mentre il Guardian continuava a salire, col reject % che restava basso.
+
+Il freno chiude il buco senza reintrodurre il problema del denominatore di
+`errorCount`: invece di stimare una % d'errore, guarda direttamente l'**hashrate
+efficace** (`MinerSample.hashrate_ths`, già l'EWMA reale di AxeOS). Lo stato
+per-miner tiene il **picco** di hashrate visto e la frequenza a cui l'ha toccato.
+Se a una frequenza pari o superiore al picco l'hashrate scende sotto
+`peak × (1 − hashrate_drop_pct)` (default 15 %), il chip è instabile → si scende
+di `step_down_hashrate_mhz` e si fissa un **soft ceiling** in memoria appena
+sotto il punto che si è rotto, così il recupero si assesta lì invece di
+ri-arrampicarsi (evita l'hunting al bordo). Il soft ceiling non tocca la config
+utente e si azzera quando il miner esce dal loop (offline/disabilitato).
+
+Guardie: la lettura dell'hashrate si ignora per `hashrate_settle_seconds`
+(default 120 s) dopo un cambio, perché l'EWMA di AxeOS è in ritardo di un minuto
+o due e scambieremmo l'assestamento per un crollo. Il ramo ha priorità appena
+sotto la temperatura (vedi §3) e batte sia il reject sia il recupero. La conta
+grezza `errorCount` (`MinerSample.hw_errors`) resta esposta come telemetria nel
+readout live, ma **non** è il segnale di controllo — quello è l'hashrate.
 
 Fatto chiave (confermato sul campo, sia Bitaxe sia Nerd\*): **AxeOS applica il
 cambio di frequenza — e di voltaggio — a caldo, senza reboot.** Quindi non c'è
@@ -219,7 +253,9 @@ comportarsi bene.
   (< `reject_min_shares`): su un solo-miner a difficoltà alta, finestre con
   pochi share fanno governare il solo VR per quel tick. È voluto (evita falsi
   allarmi da una singola share stale), non un limite di famiglia: i contatori
-  share esistono sia su Bitaxe sia su Nerd\*.
+  share esistono sia su Bitaxe sia su Nerd\*. Mitigato da 1.10.5: il freno
+  anti-regressione dell'hashrate (§3.1) non dipende dal volume di share, quindi
+  l'instabilità da overclock viene colta anche quando il reject è muto.
 - **Nessuna finestra oraria** (l'amico n8n la usava per energia off-peak / fresco
   notturno; MinerWatch gira 24/7, quindi sempre attivo quando abilitato). Una
   finestra oraria è una possibile aggiunta futura.

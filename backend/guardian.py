@@ -93,6 +93,8 @@ def decide_frequency(
     step_down_err_mhz: int,
     step_up_mhz: int,
     source_label: str = "VR",
+    hashrate_regressed: bool = False,
+    step_down_hr_mhz: int | None = None,
 ) -> tuple[int, str]:
     """Decide the next frequency for one miner.
 
@@ -110,6 +112,14 @@ def decide_frequency(
     the branch that depends on it. So with no temperature reading the governor
     won't move on heat, and when too few shares landed in the interval to trust
     a reject % the error branch is skipped and temperature governs alone.
+
+    ``hashrate_regressed`` is a second instability signal computed by the caller:
+    True when effective hashrate has dropped below what this chip has proven it
+    can sustain at an equal-or-higher frequency (ASIC hardware errors eating real
+    work). It backs off by ``step_down_hr_mhz`` (defaulting to
+    ``step_down_temp_mhz``) and ranks just under the temperature safety cut, so a
+    chip that's silently degrading is pulled back even when the pool-reject % and
+    the temperature both look fine.
     """
     # Defensive: a mis-set floor above the ceiling must not brick the loop.
     if floor_mhz > ceiling_mhz:
@@ -131,6 +141,10 @@ def decide_frequency(
             f"{source_label} {temp_c:.1f}°C > {temp_high_c:.0f}°C "
             f"→ -{step_down_temp_mhz} MHz"
         )
+    elif hashrate_regressed:
+        sd_hr = step_down_hr_mhz if step_down_hr_mhz is not None else step_down_temp_mhz
+        target = current_freq - sd_hr
+        reason = f"effective hashrate dropped (instability) → -{sd_hr} MHz"
     elif hw_error_pct is not None and hw_error_pct > hw_error_pct_max:
         target = current_freq - step_down_err_mhz
         reason = (
@@ -170,6 +184,11 @@ class _GuardianState:
         "last_ts",
         "last_temp_c",
         "last_reject_pct",
+        "peak_hashrate",
+        "peak_freq",
+        "soft_ceiling",
+        "prev_hw_errors",
+        "last_hashrate",
     )
 
     def __init__(self) -> None:
@@ -181,6 +200,18 @@ class _GuardianState:
         self.last_ts: float = 0.0
         self.last_temp_c: float | None = None
         self.last_reject_pct: float | None = None
+        # Best effective hashrate this chip has shown, and the frequency it hit
+        # it at — the reference the regression brake compares against.
+        self.peak_hashrate: float | None = None
+        self.peak_freq: int | None = None
+        # In-memory ceiling pinned below a frequency that proved unstable, so
+        # recovery can't climb back into it. Never written to the DB; resets
+        # when the miner drops out of the loop (offline/disabled).
+        self.soft_ceiling: int | None = None
+        # Previous ASIC error counter, for the per-interval delta surfaced in
+        # the live readout.
+        self.prev_hw_errors: int | None = None
+        self.last_hashrate: float | None = None
 
 
 def _reject_pct(
@@ -346,17 +377,42 @@ class GuardianController:
         temp_c = sample.temp_chip_c if source == "chip" else sample.temp_vr_c
         source_label = "Chip" if source == "chip" else "VR"
 
+        # Effective hashrate (TH/s) and the ASIC hardware-error counter — the
+        # signals behind the regression brake. ``hashrate_ths`` is AxeOS's
+        # reported (real) hashrate; ``hw_errors`` is the summed per-ASIC invalid-
+        # nonce count, which climbs when an overclock starts producing garbage
+        # (those bad nonces crater real hashrate but never reach the pool, so the
+        # reject-% term stays blind to them).
+        hashrate_ths = sample.hashrate_ths
+        hw_errors = sample.hw_errors
+        err_delta = None
+        if (
+            hw_errors is not None
+            and state.prev_hw_errors is not None
+            and hw_errors >= state.prev_hw_errors
+        ):
+            err_delta = hw_errors - state.prev_hw_errors
+        if hw_errors is not None:
+            state.prev_hw_errors = hw_errors
+        tele = dict(
+            hashrate_ths=hashrate_ths,
+            asic_errors=hw_errors,
+            asic_error_delta=err_delta,
+        )
+
         # Always record the latest reading for the status endpoint, even if we
         # can't act this tick.
         now = time.time()
         state.last_ts = now
         state.last_temp_c = temp_c
         state.last_reject_pct = reject_pct
+        state.last_hashrate = hashrate_ths
 
         if current_freq is None:
             # Can't govern without knowing the frequency.
             self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
-                          "no frequency reading", changed=False, source=source)
+                          "no frequency reading", changed=False, source=source,
+                          soft_ceiling=state.soft_ceiling, **tele)
             return
 
         # Resolve the per-miner ceiling/floor.
@@ -380,9 +436,34 @@ class GuardianController:
         else:
             temp_high, temp_low = default_high, default_low
 
+        # Fold in any soft ceiling pinned after a past hashrate regression so the
+        # recovery branch can't climb back into a frequency that proved unstable.
+        # It lives in memory only and resets when the miner drops out of the loop.
+        eff_ceiling = ceiling
+        if state.soft_ceiling is not None:
+            eff_ceiling = min(eff_ceiling, int(state.soft_ceiling))
+
+        # Effective-hashrate regression: track the best hashrate this chip has
+        # shown and the frequency it hit it at; if we're now at an equal-or-higher
+        # frequency but producing meaningfully less, ASIC errors are eating real
+        # work even though temp and pool-reject look fine. Skip right after a
+        # change — AxeOS's hashrate EWMA lags and would misread the settling.
+        settled = (now - state.last_change_ts) >= max(0, int(gcfg.hashrate_settle_seconds))
+        regressed = False
+        if hashrate_ths is not None and settled:
+            if state.peak_hashrate is None or hashrate_ths > state.peak_hashrate:
+                state.peak_hashrate = hashrate_ths
+                state.peak_freq = int(current_freq)
+            elif (
+                state.peak_freq is not None
+                and int(current_freq) >= state.peak_freq
+                and hashrate_ths < state.peak_hashrate * (1 - float(gcfg.hashrate_drop_pct))
+            ):
+                regressed = True
+
         target, reason = decide_frequency(
             current_freq=int(current_freq),
-            ceiling_mhz=ceiling,
+            ceiling_mhz=eff_ceiling,
             floor_mhz=floor,
             temp_c=temp_c,
             hw_error_pct=reject_pct,
@@ -393,13 +474,24 @@ class GuardianController:
             step_down_err_mhz=gcfg.step_down_err_mhz,
             step_up_mhz=gcfg.step_up_mhz,
             source_label=source_label,
+            hashrate_regressed=regressed,
+            step_down_hr_mhz=gcfg.step_down_hashrate_mhz,
         )
+
+        # When the regression brake fires, pin a soft ceiling just below the
+        # frequency that broke so recovery settles under it instead of hunting
+        # back into the unstable point.
+        if regressed and target < int(current_freq):
+            state.soft_ceiling = (
+                int(target) if state.soft_ceiling is None
+                else min(int(state.soft_ceiling), int(target))
+            )
 
         if target == int(current_freq):
             # Nothing to do — don't touch the miner (no NVS write).
             self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
-                          reason, changed=False, ceiling=ceiling, floor=floor,
-                          source=source)
+                          reason, changed=False, ceiling=eff_ceiling, floor=floor,
+                          source=source, soft_ceiling=state.soft_ceiling, **tele)
             return
 
         # Optional cooldown: enforce extra settle time between changes.
@@ -407,7 +499,8 @@ class GuardianController:
         if cooldown > 0 and (now - state.last_change_ts) < cooldown:
             self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
                           f"cooldown ({reason})", changed=False,
-                          ceiling=ceiling, floor=floor, source=source)
+                          ceiling=eff_ceiling, floor=floor, source=source,
+                          soft_ceiling=state.soft_ceiling, **tele)
             return
 
         # Apply the change (live — no restart on AxeOS).
@@ -421,23 +514,26 @@ class GuardianController:
                         miner.get("name"), exc)
             self._publish(miner_id, miner, current_freq, temp_c, reject_pct,
                           f"set_frequency failed: {exc}", changed=False,
-                          ceiling=ceiling, floor=floor, source=source)
+                          ceiling=eff_ceiling, floor=floor, source=source,
+                          soft_ceiling=state.soft_ceiling, **tele)
             return
         if ok:
             state.last_commanded_freq = int(target)
             state.last_change_ts = now
             state.last_reason = reason
             log.info(
-                "guardian: miner=%s %d→%d MHz (%s) [%s=%s reject%%=%s ceiling=%d floor=%d]",
+                "guardian: miner=%s %d→%d MHz (%s) [%s=%s reject%%=%s hr=%s "
+                "ceiling=%d floor=%d]",
                 miner.get("name"), int(current_freq), int(target), reason,
                 source_label,
                 f"{temp_c:.1f}" if temp_c is not None else "n/a",
                 f"{reject_pct:.2f}" if reject_pct is not None else "n/a",
-                ceiling, floor,
+                f"{hashrate_ths:.2f}" if hashrate_ths is not None else "n/a",
+                eff_ceiling, floor,
             )
             self._publish(miner_id, miner, target, temp_c, reject_pct, reason,
-                          changed=True, ceiling=ceiling, floor=floor,
-                          source=source)
+                          changed=True, ceiling=eff_ceiling, floor=floor,
+                          source=source, soft_ceiling=state.soft_ceiling, **tele)
         else:
             log.warning("guardian: miner=%s rejected set_frequency(%d)",
                         miner.get("name"), int(target))
@@ -455,13 +551,20 @@ class GuardianController:
         ceiling: int | None = None,
         floor: int | None = None,
         source: str = "vr",
+        hashrate_ths: float | None = None,
+        asic_errors: int | None = None,
+        asic_error_delta: int | None = None,
+        soft_ceiling: int | None = None,
     ) -> None:
         """Update the live status surfaced by the API/UI.
 
         ``temp_c`` is the governed sensor's reading and ``source`` says which
         sensor it is ("vr" | "chip"), so the UI can label it correctly. The
         legacy ``vr_temp_c`` key is kept (populated only in VR mode) so any
-        older consumer keeps working.
+        older consumer keeps working. ``hashrate_ths`` / ``asic_errors`` are the
+        effective-hashrate and ASIC hardware-error readings the regression brake
+        watches; ``soft_ceiling`` is the in-memory cap pinned after a regression
+        (``ceiling`` already reflects it — this is for an explicit UI hint).
         """
         temp_r = round(temp_c, 1) if temp_c is not None else None
         self._status[miner_id] = {
@@ -473,6 +576,10 @@ class GuardianController:
             "temp_source": source,
             "vr_temp_c": temp_r if source == "vr" else None,
             "reject_pct": round(reject_pct, 3) if reject_pct is not None else None,
+            "hashrate_ths": round(hashrate_ths, 2) if hashrate_ths is not None else None,
+            "asic_errors": asic_errors,
+            "asic_error_delta": asic_error_delta,
+            "soft_ceiling_mhz": soft_ceiling,
             "reason": reason,
             "changed": bool(changed),
             "ts": int(time.time()),

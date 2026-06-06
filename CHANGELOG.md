@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.5] — 2026-06-06
+
+### Fixed
+
+- **Guardian no longer over-overclocks into ASIC instability.** The recovery
+  branch only watched the VR/chip temperature and the *pool* reject rate, but
+  ASIC hardware errors (invalid nonces from pushing frequency past what the core
+  voltage supports) crater *effective* hashrate without ever reaching the pool —
+  so the reject % stayed low and blind to them. Worse, the failing chip did less
+  real work, drew less power and ran cooler, which the governor read as "more
+  headroom" and kept raising frequency: a runaway where real hashrate collapsed
+  while the Guardian climbed. It now also watches effective hashrate against the
+  best each chip has proven it can sustain at a given frequency; a drop past
+  `hashrate_drop_pct` (default 15%) is treated as instability — it steps
+  frequency down and pins an in-memory soft ceiling just below the breaking
+  point so recovery settles under it instead of hunting back in. Disable and
+  re-enable a miner's Guardian to clear the soft ceiling.
+
+### Added
+
+- **Guardian live readout now shows effective hashrate and the ASIC
+  hardware-error count** (with the per-interval delta), and flags when a miner's
+  ceiling has been capped after a hashrate regression.
+
 ## [1.10.4] — 2026-06-06
 
 ### Added

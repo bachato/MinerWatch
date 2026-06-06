@@ -1239,6 +1239,7 @@ async def api_guardian_status(miner_id: int) -> dict:
             "chip_low_c": g.chip_low_c,
             "watchdog_c": 75.0,  # auto_control.WATCHDOG_OVERHEAT_C (chip hard net)
             "reject_pct_max": g.reject_pct_max,
+            "hashrate_drop_pct": g.hashrate_drop_pct,
             "step_down_vr_mhz": g.step_down_vr_mhz,
             "step_down_err_mhz": g.step_down_err_mhz,
             "step_up_mhz": g.step_up_mhz,
