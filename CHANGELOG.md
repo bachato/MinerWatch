@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   password. You can explicitly opt out ("I don't want to protect my miners");
   the choice is remembered server-side so it does not ask again.
 - **Dependency vulnerability scanning in CI.** `pip-audit` and `npm audit` run
-  on every push and weekly as a non-blocking signal, and Dependabot opens weekly
-  update PRs across the Python, npm, GitHub Actions and Docker dependencies.
+  on every push and weekly as a non-blocking signal, flagging known CVEs in the
+  Python and frontend dependencies before they bite.
 
 ### Fixed
 
