@@ -403,6 +403,20 @@ export interface BlockFindsResponse {
   block_finds: BlockFind[];
 }
 
+// Ambient temperature relayed by MinerWatch from the optional MQTT
+// sensor topic — the same value shown on the ESP32 panel's bottom row.
+// `current_c` is a 60s moving average and is null when the reading is
+// stale (panel shows "-"); `min_c` / `max_c` are session extremes.
+// `has_data` is false when the relay is off or nothing has arrived yet,
+// and the dashboard hides the card in that case.
+export interface AmbientTemp {
+  current_c: number | null;
+  min_c: number | null;
+  max_c: number | null;
+  available: boolean;
+  has_data: boolean;
+}
+
 // The backend returns one row per bucket as { bucket_ts, total_ths }.
 // We keep the names backend-exact so a stray rename here is loud
 // rather than silently producing an empty chart.

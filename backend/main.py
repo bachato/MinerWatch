@@ -660,6 +660,31 @@ async def api_fleet_best_difficulty_top(
     return {"scope": scope, "limit": limit, "entries": rows}
 
 
+@app.get("/api/fleet/ambient_temp")
+async def api_fleet_ambient_temp() -> dict:
+    """Ambient temperature relayed from the optional MQTT sensor.
+
+    Mirrors the bottom row of the ESP32 panel so the dashboard shows the
+    same reading. ``has_data`` is False when the relay is disabled or no
+    value has arrived yet, and the dashboard then hides the card.
+    ``current_c`` is a 60s moving average and may be null (stale) while
+    ``min_c`` / ``max_c`` persist for the session. Values are rounded to
+    one decimal, exactly as the panel feed publishes them.
+    """
+    snap = mqtt_publisher.ambient_snapshot()
+
+    def _r(value: float | None) -> float | None:
+        return round(float(value), 1) if value is not None else None
+
+    return {
+        "current_c": _r(snap.current_c),
+        "min_c": _r(snap.min_c),
+        "max_c": _r(snap.max_c),
+        "available": snap.available,
+        "has_data": snap.has_data,
+    }
+
+
 # ---------- Live per-share streaming (AxeOS only) ----------
 #
 # The REST poller only sees aggregates. For AxeOS miners we also tap the

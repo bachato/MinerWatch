@@ -5,6 +5,7 @@ import { CriticalBanner } from '@/components/dashboard/CriticalBanner';
 import { AlertsBanner } from '@/components/dashboard/AlertsBanner';
 import { FleetSummary } from '@/components/dashboard/FleetSummary';
 import { BlockFindsCard } from '@/components/dashboard/BlockFindsCard';
+import { AmbientTempCard } from '@/components/dashboard/AmbientTempCard';
 import { BestSharesCard } from '@/components/dashboard/BestSharesCard';
 import { FleetHashrateChart } from '@/components/dashboard/FleetHashrateChart';
 import { MinerGrid } from '@/components/dashboard/MinerGrid';
@@ -27,6 +28,7 @@ import { SecurityScanDialog } from '@/components/dashboard/SecurityScanDialog';
  *   - Unread alerts bar  · only when there are unack alerts
  *   - Fleet KPIs (5 cards)  · online · hashrate · power · efficiency · max temp
  *   - Block-finds trophy  · only after a solo block has been mined
+ *   - Ambient temperature  · only when the MQTT sensor relay has data
  *   - Best-share fleet card  · session + all-time
  *   - Fleet hashrate chart  · last hour, 1-min buckets
  *   - Miner grid  · cards linking to /miner/:id (or empty-state CTA)
@@ -85,6 +87,7 @@ export function DashboardPage() {
       <FleetSummary miners={miners} />
 
       <BlockFindsCard />
+      <AmbientTempCard />
       <BestSharesCard />
       <FleetHashrateChart />
 
