@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Flame, Gauge, Leaf } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -76,14 +76,25 @@ export function WorkModeControls({ data }: Props) {
   const [selected, setSelected] = useState<number | null>(liveMode);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Last polled value we adopted. Lets us tell a real device-state change
+  // apart from a re-render that just carries the same (possibly stale)
+  // reading.
+  const lastLiveRef = useRef<number | null>(liveMode);
 
   const setWorkmode = useSetWorkmode(miner.id);
 
-  // Reflect the device's reported mode (covers external changes and
-  // confirms our own set) while a command isn't in flight.
+  // Adopt the device's reported mode only when the polled value actually
+  // changes — confirming our own set, or reflecting a change made
+  // elsewhere. The click sets `selected` optimistically; a stale poll
+  // right after it still carries the previous value, so without this
+  // guard it would clobber the selection and the button would flip back
+  // to the old mode for a moment until the next poll caught up.
   useEffect(() => {
-    if (!setWorkmode.isPending) setSelected(liveMode);
-  }, [liveMode, setWorkmode.isPending]);
+    if (liveMode !== lastLiveRef.current) {
+      lastLiveRef.current = liveMode;
+      setSelected(liveMode);
+    }
+  }, [liveMode]);
 
   if (!capabilities.set_workmode) return null;
 
@@ -103,7 +114,7 @@ export function WorkModeControls({ data }: Props) {
   }
 
   const pending = setWorkmode.isPending;
-  const activeLabel = liveMode !== null ? labels[liveMode] : null;
+  const activeLabel = selected !== null ? labels[selected] : null;
 
   return (
     <Card>
