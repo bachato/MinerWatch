@@ -10,6 +10,12 @@ import type { MinerFamily } from '@/lib/types';
 export const BTC_DONATION_ADDRESS =
   'bc1qexhamvrpclpr2skyyw3u8edm8kznnvt6zjudxu';
 
+// Lightning donation address (LUD-16 Lightning Address, Wallet of Satoshi).
+// Display-only: unlike the on-chain address it has no backend counterpart —
+// the donate-hashrate flow never touches Lightning, so this lives only in
+// the frontend. If you fork the project, point it at your own LN address.
+export const LN_DONATION_ADDRESS = 'forgedfibre517@walletofsatoshi.com';
+
 // Families whose driver can repoint its pool (backend can_set_pool=True).
 // Mirrors the backend so the donate-hashrate UI can disable miners it
 // can't switch without an extra per-miner capability fetch.

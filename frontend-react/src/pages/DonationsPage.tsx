@@ -111,7 +111,7 @@ export function DonationsPage() {
           <CardHeader>
             <CardTitle className="text-base">Donate Bitcoin</CardTitle>
             <CardDescription>
-              Send any amount to the project address. BTC only.
+              Send any amount to the project address — Bitcoin on-chain or Lightning.
             </CardDescription>
           </CardHeader>
           <CardContent>
