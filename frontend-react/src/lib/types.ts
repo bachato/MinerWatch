@@ -177,6 +177,9 @@ export interface LiveSample {
   fan_pct_2: number | null;
   frequency_mhz: number | null;
   voltage_mv: number | null;
+  // Active firmware work mode (Avalon: 0=Low, 1=Mid, 2=High). Null on
+  // families without the concept. Drives the WorkModeControls highlight.
+  workmode: number | null;
   asic_count: number | null;
   // Multi-hashboard miners report one entry per physical board plus
   // the totals. ``board_count`` and ``chip_count`` separate the two
@@ -276,6 +279,8 @@ export interface Capabilities {
   set_fan: boolean;
   set_frequency: boolean;
   set_voltage: boolean;
+  // Firmware performance presets (Avalon work mode: Low/Mid/High).
+  set_workmode: boolean;
   restart: boolean;
   set_pool: boolean;
 }

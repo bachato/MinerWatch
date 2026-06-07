@@ -4,9 +4,11 @@ import { useAmbientTemp } from '@/api/hooks';
 /**
  * Ambient temperature card — a 1:1 port of the ESP32 panel's bottom row.
  *
- * Same texts ("Temperature: X°C | Min: Y°C | Max: Z°C") and the same
- * colour logic as ``common/minerwatch-core.yaml`` in the ESPHome panel:
- *   - current value: a blue→teal→green→orange→red gradient interpolated
+ * Same texts ("Temperature: X°C | Min: Y°C | Max: Z°C") and almost the
+ * same colour logic as ``common/minerwatch-core.yaml`` in the ESPHome
+ * panel — the one exception is the warm stop, retuned to the app's
+ * amber-400 so the yellow matches the chip-temp readouts:
+ *   - current value: a blue→teal→green→amber→red gradient interpolated
  *     across the 15/20/24/28/32 °C stops (so it can't be a Tailwind class,
  *     hence the inline colour);
  *   - Min always light blue, Max always red, the prefixes stay muted;
@@ -21,13 +23,15 @@ const NODATA_COLOR = '#9AA0A6';
 const MIN_COLOR = '#4DA6FF';
 const MAX_COLOR = '#E01B24';
 
-// Gradient stops copied verbatim from the panel lambda. Kept as parallel
-// arrays (not objects) to mirror the firmware source line-for-line, so a
-// future tweak there is trivial to reproduce here.
+// Gradient stops adapted from the panel lambda, with one deliberate
+// change: the warm stop (28 °C) is retuned to the app's amber-400
+// (#FBBF24) so the "yellow" matches the chip-temp readouts and the
+// work-mode buttons. Min (blue) and Max (red) stay as the panel has
+// them. Kept as parallel arrays to mirror the firmware source.
 const G_T = [15, 20, 24, 28, 32];
-const G_R = [59, 45, 51, 230, 224];
-const G_G = [130, 212, 209, 160, 27];
-const G_B = [246, 191, 122, 40, 36];
+const G_R = [59, 45, 51, 251, 224];
+const G_G = [130, 212, 209, 191, 27];
+const G_B = [246, 191, 122, 36, 36];
 
 /** Interpolated #rrggbb for the current value, matching the panel. */
 function gradientColor(tc: number): string {

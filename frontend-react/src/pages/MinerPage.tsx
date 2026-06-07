@@ -12,6 +12,7 @@ import { HardwareCards } from '@/components/miner/HardwareCards';
 import { Hashboards } from '@/components/miner/Hashboards';
 import { HistoryCharts } from '@/components/miner/HistoryCharts';
 import { FanControls } from '@/components/miner/FanControls';
+import { WorkModeControls } from '@/components/miner/WorkModeControls';
 import { GuardianPanel } from '@/components/miner/GuardianPanel';
 import { useMiner } from '@/api/hooks';
 
@@ -124,7 +125,8 @@ export function MinerPage() {
           <HistoryCharts minerId={idNum} />
         </TabsContent>
 
-        <TabsContent value="controls" className="mt-0">
+        <TabsContent value="controls" className="mt-0 space-y-4">
+          <WorkModeControls data={data} />
           <FanControls data={data} />
         </TabsContent>
 
