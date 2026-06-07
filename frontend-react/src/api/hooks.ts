@@ -267,6 +267,21 @@ export function useSetFan(minerId: number) {
   });
 }
 
+interface WorkModePayload {
+  mode: number;
+}
+
+export function useSetWorkmode(minerId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: WorkModePayload) =>
+      api(`/api/miners/${minerId}/control/workmode`, { method: 'POST', body: payload }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['miner', minerId] });
+    },
+  });
+}
+
 interface FanConfigPayload {
   fan_mode?: 'manual' | 'firmware' | 'minerwatch';
   auto_target_c?: number;

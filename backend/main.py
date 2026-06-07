@@ -966,6 +966,7 @@ def _capabilities(family: str) -> dict:
         "set_fan": cls.can_set_fan,
         "set_frequency": cls.can_set_frequency,
         "set_voltage": cls.can_set_voltage,
+        "set_workmode": cls.can_set_workmode,
         "restart": cls.can_restart,
         "set_pool": cls.can_set_pool,
     }
@@ -983,6 +984,11 @@ class FreqPayload(BaseModel):
 
 class VoltagePayload(BaseModel):
     millivolts: int = Field(..., ge=800, le=2000)
+
+
+class WorkModePayload(BaseModel):
+    # Discrete firmware preset. Avalon Nano 3s: 0=Low, 1=Mid, 2=High.
+    mode: int = Field(..., ge=0, le=2)
 
 
 async def _resolve_driver(miner_id: int):
@@ -1023,6 +1029,17 @@ async def api_set_voltage(miner_id: int, payload: VoltagePayload) -> dict:
     if not drv.can_set_voltage:
         raise HTTPException(400, f"family {miner['family']} does not support voltage control")
     ok = await drv.set_voltage(payload.millivolts)
+    if not ok:
+        raise HTTPException(502, "the miner rejected the command")
+    return {"ok": True}
+
+
+@app.post("/api/miners/{miner_id}/control/workmode")
+async def api_set_workmode(miner_id: int, payload: WorkModePayload) -> dict:
+    miner, drv = await _resolve_driver(miner_id)
+    if not drv.can_set_workmode:
+        raise HTTPException(400, f"family {miner['family']} does not support work-mode control")
+    ok = await drv.set_workmode(payload.mode)
     if not ok:
         raise HTTPException(502, "the miner rejected the command")
     return {"ok": True}

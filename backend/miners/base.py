@@ -216,6 +216,11 @@ class MinerSample:
     frequency_mhz: float | None = None
     voltage_mv: float | None = None
     asic_count: int | None = None
+    # Active firmware performance preset, when the family exposes one.
+    # On Avalon this is the ``WORKMODE`` field (0=Low, 1=Mid, 2=High);
+    # the frontend uses it to highlight the selected work-mode button.
+    # None on families without the concept.
+    workmode: int | None = None
     # Multi-hashboard miners (S19/S21 + LuxOS, BMM, …) report one
     # entry per physical board. ``board_count`` is the length of that
     # list, ``chip_count`` is the total ASIC chip count across all
@@ -541,6 +546,11 @@ class MinerDriver:
     can_set_fan: bool = False
     can_set_frequency: bool = False
     can_set_voltage: bool = False
+    # Whether this family supports the firmware's discrete performance
+    # presets ("work mode", Low/Mid/High on Avalon). Distinct from the
+    # free-form frequency/voltage levers: a work mode is a single
+    # firmware-blessed command the vendor app also issues.
+    can_set_workmode: bool = False
     can_restart: bool = False
     # Whether this family supports repointing its pool via the API. Gates
     # the "Donate hashrate" feature: families with can_set_pool=False show
@@ -565,6 +575,10 @@ class MinerDriver:
         raise NotImplementedError
 
     async def set_voltage(self, millivolts: int) -> bool:
+        raise NotImplementedError
+
+    async def set_workmode(self, mode: int) -> bool:
+        """Select a firmware performance preset (e.g. 0=Low, 1=Mid, 2=High)."""
         raise NotImplementedError
 
     async def restart(self) -> bool:

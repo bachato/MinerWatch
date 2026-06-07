@@ -343,6 +343,14 @@ def _enrich_from_estats(sample: MinerSample, stats: dict[str, Any]) -> None:
         if ta:
             sample.asic_count = ta
 
+    # ---- Work mode (performance preset) ----
+    # ``WORKMODE[n]`` is the active preset the firmware is running
+    # (0=Low, 1=Mid, 2=High on the Nano 3s). We surface it so the UI can
+    # highlight the selected work-mode button. ``WORKLEVEL`` is a finer
+    # sub-level inside a mode; we don't act on it yet.
+    if (wm := _opt_int(fields.get("WORKMODE"))) is not None:
+        sample.workmode = wm
+
 
 def _enrich_from_pools(sample: MinerSample, pools: dict[str, Any]) -> None:
     """Populate ``sample.pools`` and the legacy ``pool_url``/``worker``.
