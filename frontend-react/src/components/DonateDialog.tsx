@@ -31,7 +31,7 @@ export function DonateDialog({ open, onOpenChange }: DonateDialogProps) {
             Support MinerWatch
           </DialogTitle>
           <DialogDescription>
-            If MinerWatch is useful to your home rig, donations are welcome — BTC only.
+            If MinerWatch is useful to your home rig, donations are welcome — Bitcoin on-chain or Lightning.
           </DialogDescription>
         </DialogHeader>
 
