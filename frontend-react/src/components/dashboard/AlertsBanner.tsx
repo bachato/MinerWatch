@@ -36,21 +36,23 @@ export function AlertsBanner() {
 
   return (
     <div className={`rounded-lg border text-sm ${tone}`}>
-      <div className="flex items-center gap-3 px-4 py-3">
-        <Icon className="h-4 w-4 shrink-0" />
-        <span className="font-medium whitespace-nowrap">
-          {alerts.length} unread alert{alerts.length === 1 ? '' : 's'}
-        </span>
-        {!expanded && (
-          <span className="min-w-0 truncate opacity-90">· {last.message}</span>
-        )}
-        <div className="ml-auto flex items-center gap-2">
+      <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <Icon className="h-4 w-4 shrink-0" />
+          <span className="font-medium whitespace-nowrap">
+            {alerts.length} unread alert{alerts.length === 1 ? '' : 's'}
+          </span>
+          {!expanded && (
+            <span className="min-w-0 truncate opacity-90">· {last.message}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 sm:ml-auto">
           {canExpand && (
             <Button
               type="button"
               size="sm"
               variant="subtle"
-              className="whitespace-nowrap"
+              className="flex-1 whitespace-nowrap sm:flex-initial"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
             >
@@ -66,7 +68,7 @@ export function AlertsBanner() {
             type="button"
             size="sm"
             variant="subtle"
-            className="whitespace-nowrap"
+            className="flex-1 whitespace-nowrap sm:flex-initial"
             disabled={ack.isPending}
             onClick={() => ack.mutate()}
           >
