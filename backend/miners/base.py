@@ -173,6 +173,21 @@ class MinerSample:
     hashrate_ths: float | None = None  # TH/s
     power_w: float | None = None
     efficiency_w_per_ths: float | None = None
+    # Theoretical hashrate for the current frequency, as the firmware itself
+    # computes it (AxeOS ``expectedHashrate``, GH/s → TH/s here). The Guardian
+    # prefers this over its own ``freq * cores / 1e6`` so the validity test
+    # matches exactly what the firmware reports; falls back to the formula when
+    # a family doesn't expose it.
+    expected_hashrate_ths: float | None = None
+    # ASIC error percentage as the firmware reports it (AxeOS ``errorPercentage``)
+    # — the "error %" shown on the AxeOS dashboard. Surfaced as telemetry; the
+    # Guardian governs on effective hashrate, not this.
+    error_pct: float | None = None
+    # PSU input-rail voltage in mV (AxeOS ``voltage`` — distinct from the ASIC
+    # ``coreVoltage`` in ``voltage_mv``) and the firmware's own power ceiling in
+    # W (AxeOS ``maxPower``). Used by the co-tuner's hard safety cutoffs.
+    input_voltage_mv: float | None = None
+    max_power_w: float | None = None
 
     # Thermal
     # ``temp_chip_c`` is the *hottest* chip sensor — every multi-sensor
@@ -215,7 +230,19 @@ class MinerSample:
     # ASIC
     frequency_mhz: float | None = None
     voltage_mv: float | None = None
+    # The *set* core voltage (AxeOS ``coreVoltage``), vs ``voltage_mv`` which
+    # prefers the measured ``coreVoltageActual``. The co-tuner steers on the SET
+    # value so its ±steps are deterministic and don't chase the measured droop
+    # under load (which otherwise looks like the voltage "dropping" on a freq up).
+    voltage_set_mv: float | None = None
     asic_count: int | None = None
+    # Number of small cores per ASIC (AxeOS ``smallCoreCount``). Combined with
+    # ``asic_count`` it gives the chip's total core count, from which the
+    # *theoretical* hashrate for a frequency is derived
+    # (``freq_mhz * small_core_count * asic_count / 1e6`` TH/s). The Guardian's
+    # co-tuner uses that to tell whether the chip is actually keeping up at the
+    # current frequency. Reported by every AxeOS family; None elsewhere.
+    small_core_count: int | None = None
     # Active firmware performance preset, when the family exposes one.
     # On Avalon this is the ``WORKMODE`` field (0=Low, 1=Mid, 2=High);
     # the frontend uses it to highlight the selected work-mode button.

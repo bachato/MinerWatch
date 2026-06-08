@@ -21,6 +21,7 @@ from backend.guardian import (  # noqa: E402
     _GuardianState,
     _reject_pct,
     decide_frequency,
+    decide_point,
 )
 
 # Defaults mirroring GuardianCfg / the friend's field-tested values.
@@ -209,50 +210,146 @@ def test_temp_band_picks_source_defaults():
     assert cfg.temp_band("bogus") == (cfg.vr_high_c, cfg.vr_low_c)
 
 
-# ---- hashrate-regression brake ---------------------------------------------
+# ---- hashrate validity brake (theoretical) ---------------------------------
 
-def test_hashrate_regression_steps_down_even_when_cool():
-    # VR cool (would want +10) but effective hashrate regressed → back off.
+def test_invalid_steps_down_even_when_cool():
+    # Source cool (would want +10) but hashrate below theoretical → back off.
     target, reason = decide(
-        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_regressed=True
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_invalid=True
     )
     assert target == 530  # -step_down_temp_mhz (the hr step defaults to it)
     assert "hashrate" in reason
 
 
-def test_hashrate_regression_uses_its_own_step():
+def test_invalid_uses_its_own_step():
     target, _ = decide(
         current_freq=550, temp_c=60.0, hw_error_pct=0.0,
-        hashrate_regressed=True, step_down_hr_mhz=30,
+        hashrate_invalid=True, step_down_hr_mhz=30,
     )
     assert target == 520
 
 
-def test_temp_hot_beats_regression():
-    # Both a temperature cut and a regression apply → temperature wins.
+def test_temp_hot_beats_invalid():
+    # Both a temperature cut and an invalid-hashrate cut apply → temperature wins.
     target, reason = decide(
         current_freq=550, temp_c=80.0, hw_error_pct=0.0,
-        hashrate_regressed=True, step_down_hr_mhz=40,
+        hashrate_invalid=True, step_down_hr_mhz=40,
     )
     assert target == 530  # -20 temp, not -40 hr
     assert "°C" in reason
 
 
-def test_regression_beats_reject_and_recovery():
-    # Regression outranks the reject term and the cool-source recovery.
+def test_invalid_beats_reject_and_recovery():
+    # Invalid hashrate outranks the reject term and the cool-source recovery.
     target, reason = decide(
-        current_freq=550, temp_c=60.0, hw_error_pct=9.9, hashrate_regressed=True
+        current_freq=550, temp_c=60.0, hw_error_pct=9.9, hashrate_invalid=True
     )
     assert target == 530
     assert "hashrate" in reason
 
 
-def test_no_regression_keeps_recovering():
-    # Sanity: with regression off and VR cool, recovery still steps up.
+def test_valid_keeps_recovering():
+    # Sanity: valid hashrate + cool source → recovery still steps up.
     target, _ = decide(
-        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_regressed=False
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0, hashrate_invalid=False
     )
     assert target == 560
+
+
+def test_recovery_gated_off_holds():
+    # Cool source would normally recover, but allow_recovery=False (hashrate not
+    # yet verifiable, or not valid) → hold instead of climbing into instability.
+    target, reason = decide(
+        current_freq=550, temp_c=60.0, hw_error_pct=0.0,
+        hashrate_invalid=False, allow_recovery=False,
+    )
+    assert target == 550
+    assert "hold" in reason
+
+
+# ---- Phase 2: V/F co-tuner (decide_point) ----------------------------------
+
+DEFAULTS_PT = dict(
+    current_volt=1150,
+    ceiling_mhz=700,
+    floor_mhz=400,
+    volt_ceiling_mv=1250,
+    volt_floor_mv=1000,
+    temp_c=60.0,
+    temp_high_c=70.0,
+    temp_low_c=65.0,
+    chip_c=55.0,
+    chip_cutoff_c=70.0,
+    vr_c=55.0,
+    vr_cutoff_c=85.0,
+    power_w=20.0,
+    power_cutoff_w=40.0,
+    vin_mv=5100.0,
+    vin_min_mv=4800.0,
+    vin_max_mv=5500.0,
+    step_down_mhz=20,
+    step_up_mhz=10,
+    step_volt_mv=10,
+)
+
+
+def decide_pt(**over):
+    return decide_point(**{**DEFAULTS_PT, **over})
+
+
+def test_pt_safety_cutoff_backs_off_both():
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=False, valid=True, chip_c=72.0)
+    assert (f, v) == (580, 1140), r
+    assert "safety" in r
+
+
+def test_pt_power_cutoff_backs_off_both():
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=False, valid=True, power_w=41.0)
+    assert (f, v) == (580, 1140), r
+    assert "power" in r
+
+
+def test_pt_temp_over_limit_co_moves_down():
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=False, valid=True, temp_c=72.0)
+    assert (f, v) == (580, 1140), r
+    assert "temp" in r
+
+
+def test_pt_invalid_raises_voltage_to_cure():
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=True, valid=False)
+    assert (f, v) == (600, 1160), r  # +10 mV, frequency unchanged
+    assert "cure" in r
+
+
+def test_pt_invalid_drops_freq_when_voltage_maxed():
+    f, v, r = decide_pt(current_freq=600, current_volt=1250, hashrate_invalid=True, valid=False)
+    assert (f, v) == (580, 1250), r
+    assert "MHz" in r
+
+
+def test_pt_invalid_drops_freq_when_no_temp_headroom():
+    # Near the temp limit → can't safely add volts → drop frequency instead.
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=True, valid=False, temp_c=69.0)
+    assert (f, v) == (580, 1150), r
+
+
+def test_pt_valid_and_cool_pushes_freq():
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=False, valid=True, temp_c=60.0)
+    assert (f, v) == (610, 1150), r
+    assert "MHz" in r
+
+
+def test_pt_valid_deadband_holds():
+    # Between low (65) and high (70): nothing to do.
+    f, v, r = decide_pt(current_freq=600, hashrate_invalid=False, valid=True, temp_c=67.0)
+    assert (f, v) == (600, 1150)
+    assert "hold" in r
+
+
+def test_pt_above_ceiling_caps():
+    f, v, r = decide_pt(current_freq=720, hashrate_invalid=False, valid=True)
+    assert f == 700
+    assert "cap" in r
 
 
 if __name__ == "__main__":

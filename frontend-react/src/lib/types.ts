@@ -597,6 +597,11 @@ export interface GuardianLive {
   // Effective hashrate + ASIC hardware-error signals behind the regression
   // brake; soft_ceiling_mhz is the in-memory cap pinned after a regression.
   hashrate_ths: number | null;
+  expected_ths: number | null;   // theoretical hashrate for the current freq
+  valid: boolean | null;         // hashrate >= valid_pct of theoretical (null = not yet judged)
+  error_pct: number | null;      // firmware errorPercentage (AxeOS dashboard "error %")
+  voltage_mv: number | null;        // core voltage (Phase 2 co-tuner)
+  target_voltage_mv: number | null; // voltage the co-tuner is steering toward
   asic_errors: number | null;
   asic_error_delta: number | null;
   soft_ceiling_mhz: number | null;
@@ -615,11 +620,14 @@ export interface GuardianDefaults {
   chip_low_c: number;
   watchdog_c: number;      // 75°C chip overheat watchdog (chip-mode upper bound)
   reject_pct_max: number;
-  hashrate_drop_pct: number;
+  valid_pct: number;
   step_down_vr_mhz: number;
   step_down_err_mhz: number;
   step_up_mhz: number;
   frequency_floor_mhz: number;
+  v_ceiling_mv: number;
+  v_floor_mv: number;
+  v_step_mv: number;
 }
 
 export interface GuardianStatusResponse {
@@ -630,6 +638,9 @@ export interface GuardianStatusResponse {
   freq_floor_mhz: number | null;
   temp_source: 'vr' | 'chip';   // which sensor governs frequency
   max_temp_c: number | null;    // per-miner high threshold (null → source default)
+  voltage_enabled: boolean;     // per-miner opt-in for the voltage co-tuner (Phase 2)
+  supports_voltage: boolean;    // family exposes voltage control
+  voltage_master: boolean;      // global master switch for the voltage lever
   current_freq_mhz: number | null;
   defaults: GuardianDefaults;
   live: GuardianLive | null;

@@ -140,19 +140,20 @@ class GuardianCfg:
     # ---- Control thresholds (the friend's field-tested values). ----
     # VR temperature is the primary lever: nothing else in MinerWatch
     # governs it in a closed loop (the fan PID watches the chip, the
-    # watchdog watches the chip). 65–70 °C is the hysteresis deadband.
+    # watchdog watches the chip). 67–70 °C is the hysteresis deadband (3 °C):
+    # narrow enough to settle close to the limit, wide enough not to hunt.
     vr_high_c: float = 70.0           # above → step frequency down
-    vr_low_c: float = 65.0            # below → step frequency up (recover)
+    vr_low_c: float = 67.0            # below → step frequency up (recover)
     # Chip (ASIC) thresholds — used when a miner's Guardian temperature source
     # is set to "chip" instead of the default "vr". 60 °C is the usual Bitaxe
     # chip target, so this governs the chip toward the same point the auto-fan
     # PID already aims for: once the fan saturates and the chip drifts above
-    # 60 °C the Guardian trims frequency, recovering below 55 °C. Same 5 °C
+    # 60 °C the Guardian trims frequency, recovering below 57 °C. Same 3 °C
     # hysteresis deadband as the VR, with the 75 °C overheat watchdog still
     # underneath as the hard net. A per-miner ``guardian_max_temp_c`` overrides
     # the high point.
     chip_high_c: float = 60.0         # above → step frequency down
-    chip_low_c: float = 55.0          # below → step frequency up (recover)
+    chip_low_c: float = 57.0          # below → step frequency up (recover)
     # Rejected-share % over the interval = Δrejected / Δ(accepted+rejected)
     # × 100. This replaces the old errorCount/total HW% which was bogus on
     # AxeOS (its hashrateMonitor `total` is the hashrate, not a work counter,
@@ -171,46 +172,70 @@ class GuardianCfg:
     step_down_err_mhz: int = 10
     step_up_mhz: int = 10
 
-    # ---- Instability brake: effective-hashrate regression. ----
+    # ---- Instability brake: effective-hashrate validity (theoretical). ----
     # The reject-% term only catches POOL rejects; it misses ASIC hardware
     # errors (invalid nonces) that crater *effective* hashrate without ever
     # being submitted to the pool. Worse, an unstable chip does less real work,
     # draws less power and runs COOLER, which the recovery branch reads as "more
-    # headroom" and pushes frequency even higher — a runaway. This brake closes
-    # that gap by watching effective hashrate against the best this chip has
-    # proven it can sustain: if it falls this fraction below that peak at an
-    # equal-or-higher frequency, the chip is unstable → step down and pin a soft
-    # ceiling just below, so the recovery branch can't climb back into it.
-    hashrate_drop_pct: float = 0.15
+    # headroom" and pushes frequency even higher — a runaway. We close that gap
+    # with a physics-based test: the theoretical hashrate for a frequency is
+    # ``freq_mhz * small_core_count * asic_count / 1e6`` TH/s; a point is valid
+    # only if the measured hashrate is at least ``valid_pct`` of it. Below that
+    # the chip isn't keeping up → step down and pin a soft ceiling just below;
+    # and frequency is never pushed UP unless the current point is valid. 0.97 =
+    # 3% tolerance: tighter than the bitaxe benchmark's 6% so a *continuous*
+    # governor stays nearer the efficient edge instead of pushing frequency into
+    # rising errors. See docs/guardian-cotuner-design.md.
+    valid_pct: float = 0.97
+    # ASIC hardware-error % (AxeOS ``errorPercentage``) above which the chip is
+    # treated as unstable even when the hashrate still meets ``valid_pct``: the
+    # co-tuner raises voltage to cure it (frequency-only mode steps down). Catches
+    # the "errors climbing while pushing frequency at fixed voltage" regime early,
+    # before effective hashrate visibly drops.
+    error_pct_max: float = 2.0
     step_down_hashrate_mhz: int = 20
-    # Ignore the hashrate reading for this long after a frequency change: AxeOS
-    # reports an EWMA that lags a minute or two, so comparing too soon would
-    # misread the settling lag as a regression and throttle needlessly.
-    hashrate_settle_seconds: int = 120
+    # Ignore the hashrate reading for this long after a frequency/voltage change:
+    # AxeOS reports an EWMA that lags a minute or two, so comparing too soon
+    # would misread the settling lag as a drop. 180 s matches field tuners.
+    hashrate_settle_seconds: int = 180
 
-    # Hard frequency floor (MHz): the governor never throttles below this,
-    # so a runaway down-spiral can't drive a miner into uselessness. A
-    # per-miner ``guardian_freq_floor_mhz`` overrides this when set.
-    frequency_floor_mhz: int = 400
+    # Hard frequency floor (MHz): the governor never throttles below this, so a
+    # runaway down-spiral can't drive a miner into uselessness. 485 sits just
+    # below the Gamma's 525 stock — a little room to back off, but not into
+    # pointless territory (mrv777's benchmark floors at 400; the terminally-
+    # challenged tuner never goes below the 525 stock). A per-miner
+    # ``guardian_freq_floor_mhz`` overrides this when set.
+    frequency_floor_mhz: int = 485
 
     # Minimum seconds between two changes on the same miner. 0 = rely on
     # ``interval_seconds`` alone (each tick already leaves a full interval
     # for the VR to respond). Raise it to force extra settle time.
     cooldown_seconds: int = 0
 
-    # ---- v2 (NOT active in v1; documented here for when we wire it). ----
-    # AxeOS applies voltage changes live too, which opens a second lever:
-    #   * respond to a sustained reject rate by RAISING coreVoltage (the
-    #     proper fix for undervolt instability) instead of only cutting freq;
-    #   * when cutting frequency, optionally LOWER coreVoltage in step to
-    #     stay near Vmin and preserve J/TH efficiency.
-    # Auto-raising voltage 24/7 unattended is riskier (more heat/watts,
-    # closer to hardware limits), so it stays out of v1. The knobs below are
-    # placeholders kept inert until v2 reads them. See guardian-design.md §v2.
-    v2_voltage_enabled: bool = False
+    # ---- Phase 2: voltage co-tuning (the V/F co-tuner). ----
+    # AxeOS applies voltage changes live too, which opens a second lever: cure
+    # undervolt instability by RAISING coreVoltage instead of only cutting freq,
+    # and LOWER it alongside frequency when shedding heat (stay near Vmin, better
+    # J/TH). Auto-raising voltage 24/7 unattended is the riskiest lever, so it is
+    # gated TWICE: this global master switch AND a per-miner opt-in
+    # (``guardian_voltage_enabled``) behind a confirmation. ``v2_voltage_enabled``
+    # is the master — flip it False to disable the voltage lever fleet-wide
+    # regardless of per-miner opt-ins. See docs/guardian-cotuner-design.md.
+    v2_voltage_enabled: bool = True
     v2_voltage_step_mv: int = 10
-    v2_voltage_ceiling_mv: int = 1300
+    v2_voltage_ceiling_mv: int = 1350
     v2_voltage_floor_mv: int = 1000
+
+    # ---- Hard safety cutoffs (checked every tick when voltage co-tuning). ----
+    # If any is hit the governor backs BOTH levers off (drop V and F) at once.
+    # The chip cutoff sits below the 75 °C overheat watchdog so we act first; the
+    # VR can run hotter than the user's soft limit; power falls back here when the
+    # firmware doesn't report its own ``maxPower``; Vin guards a sagging PSU.
+    chip_cutoff_c: float = 70.0
+    vr_cutoff_c: float = 85.0
+    power_cutoff_w: float = 40.0
+    vin_min_mv: float = 4800.0
+    vin_max_mv: float = 5500.0
 
     def temp_band(self, source: str | None) -> tuple[float, float]:
         """``(high_c, low_c)`` default thresholds for a temperature source.

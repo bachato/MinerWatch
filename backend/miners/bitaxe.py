@@ -115,6 +115,7 @@ class BitaxeDriver(MinerDriver):
         # Frequenza in MHz, voltage in mV
         freq_mhz = _opt_float(data.get("frequency"))
         voltage_mv = _opt_float(data.get("coreVoltageActual") or data.get("coreVoltage"))
+        voltage_set_mv = _opt_float(data.get("coreVoltage"))
 
         fan_rpm = _opt_int(data.get("fanrpm"))
         fan_pct = _opt_float(data.get("fanspeed"))
@@ -134,6 +135,17 @@ class BitaxeDriver(MinerDriver):
         asic_count = _opt_int(data.get("asicCount"))
         if asic_count is None:
             asic_count = _asics_from_monitor(data)
+        # Small cores per ASIC — used by the Guardian to compute the theoretical
+        # hashrate for a frequency. Always present on AxeOS /api/system/info.
+        small_core_count = _opt_int(data.get("smallCoreCount"))
+        # Firmware's own theoretical hashrate (GH/s) + error %, PSU input voltage
+        # and power ceiling — used by the Guardian's validity test and the
+        # co-tuner's safety cutoffs.
+        expected_ghs = _opt_float(data.get("expectedHashrate"))
+        expected_ths = round(expected_ghs / 1000.0, 4) if expected_ghs else None
+        error_pct = _opt_float(data.get("errorPercentage"))
+        input_voltage_mv = _opt_float(data.get("voltage"))
+        max_power_w = _opt_float(data.get("maxPower"))
 
         accepted = _opt_int(data.get("sharesAccepted"))
         rejected = _opt_int(data.get("sharesRejected"))
@@ -207,7 +219,13 @@ class BitaxeDriver(MinerDriver):
             fan_pct=fan_pct,
             frequency_mhz=freq_mhz,
             voltage_mv=voltage_mv,
+            voltage_set_mv=voltage_set_mv,
             asic_count=asic_count,
+            small_core_count=small_core_count,
+            expected_hashrate_ths=expected_ths,
+            error_pct=error_pct,
+            input_voltage_mv=input_voltage_mv,
+            max_power_w=max_power_w,
             # Aggregate HW-error counter, summed across ASICs from the
             # hashrateMonitor block. Raw telemetry only — NOT used by the
             # Guardian (which governs on the reject rate instead; see the note

@@ -1230,6 +1230,10 @@ class GuardianConfigPayload(BaseModel):
     # derived from it server-side. Wide bounds here; the chip-mode vs 75°C
     # watchdog guard is enforced in the endpoint where the source is known.
     max_temp_c: Optional[float] = Field(default=None, ge=40, le=110)
+    # Per-miner opt-in for the Phase 2 voltage co-tuner. Gated by the global
+    # v2_voltage_enabled master switch + the family supporting voltage control;
+    # the UI puts a confirmation in front of it.
+    voltage_enabled: Optional[bool] = None
 
 
 def _miner_current_freq(miner_id: int) -> int | None:
@@ -1272,6 +1276,9 @@ async def api_guardian_status(miner_id: int) -> dict:
         "freq_floor_mhz": miner.get("guardian_freq_floor_mhz"),
         "temp_source": (miner.get("guardian_temp_source") or "vr"),
         "max_temp_c": miner.get("guardian_max_temp_c"),
+        "voltage_enabled": bool(miner.get("guardian_voltage_enabled")),
+        "supports_voltage": bool(caps.get("set_voltage")),
+        "voltage_master": g.v2_voltage_enabled,
         "current_freq_mhz": current,
         "defaults": {
             "interval_seconds": g.interval_seconds,
@@ -1281,11 +1288,15 @@ async def api_guardian_status(miner_id: int) -> dict:
             "chip_low_c": g.chip_low_c,
             "watchdog_c": 75.0,  # auto_control.WATCHDOG_OVERHEAT_C (chip hard net)
             "reject_pct_max": g.reject_pct_max,
-            "hashrate_drop_pct": g.hashrate_drop_pct,
+            "valid_pct": g.valid_pct,
+            "error_pct_max": g.error_pct_max,
             "step_down_vr_mhz": g.step_down_vr_mhz,
             "step_down_err_mhz": g.step_down_err_mhz,
             "step_up_mhz": g.step_up_mhz,
             "frequency_floor_mhz": g.frequency_floor_mhz,
+            "v_ceiling_mv": g.v2_voltage_ceiling_mv,
+            "v_floor_mv": g.v2_voltage_floor_mv,
+            "v_step_mv": g.v2_voltage_step_mv,
         },
         "live": guardian.status(miner_id),
     }
@@ -1331,6 +1342,20 @@ async def api_guardian_config(miner_id: int, payload: GuardianConfigPayload) -> 
             "watchdog — choose a lower value",
         )
 
+    # Voltage co-tuner opt-in: requires the family to support voltage control and
+    # the global master switch to be on. (Phase 2 — the riskiest lever.)
+    if payload.voltage_enabled:
+        if not caps.get("set_voltage"):
+            raise HTTPException(
+                400, "this miner family does not support voltage control"
+            )
+        if not cfg.guardian.v2_voltage_enabled:
+            raise HTTPException(
+                400,
+                "voltage co-tuning is disabled globally "
+                "(guardian.v2_voltage_enabled)",
+            )
+
     # On first enable, default the ceiling to the current frequency so the
     # governor can only hold/back off until the user raises the cap.
     max_freq = payload.max_freq_mhz
@@ -1354,7 +1379,12 @@ async def api_guardian_config(miner_id: int, payload: GuardianConfigPayload) -> 
         freq_floor_mhz=payload.freq_floor_mhz,
         temp_source=source,
         max_temp_c=payload.max_temp_c,
+        voltage_enabled=payload.voltage_enabled,
     )
+    # Any settings change re-probes from scratch: drop the in-memory state so a
+    # stale soft ceiling (or reject/settle state) doesn't linger. Fixes "disable
+    # to reset the soft ceiling" not working until the next tick.
+    guardian.reset_miner(miner_id)
     return {"ok": True, "max_freq_mhz": max_freq}
 
 

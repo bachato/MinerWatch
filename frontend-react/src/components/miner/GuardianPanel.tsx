@@ -30,7 +30,7 @@ interface Props {
  * temperature signal — the VR by default, or the ASIC chip per-miner — and the
  * HW error rate inside safe bounds, never above a per-miner "max frequency"
  * ceiling (default: the current frequency). It is frequency-only in v1. This
- * panel is the per-miner opt-in + the editable ceiling/floor, the temperature
+ * panel is the per-miner opt-in + the editable max frequency, the temperature
  * source and max-temperature knobs, and a live readout of the loop's last
  * decision. Enabling it opens an at-your-own-risk confirmation first.
  */
@@ -45,12 +45,13 @@ export function GuardianPanel({ data }: Props) {
   // The "max frequency" field. Seeded from the stored ceiling, falling back
   // to the live current frequency (what it would default to on first enable).
   const [maxFreq, setMaxFreq] = useState<number | ''>('');
-  const [floor, setFloor] = useState<number | ''>('');
   // Temperature source ('vr' | 'chip') and the per-miner max temperature.
   const [source, setSource] = useState<'vr' | 'chip'>('vr');
   const [maxTemp, setMaxTemp] = useState<number | ''>('');
   // At-your-own-risk confirmation, gating the enable toggle.
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Separate (stronger) confirmation for the Phase 2 voltage co-tuner opt-in.
+  const [voltConfirmOpen, setVoltConfirmOpen] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +59,6 @@ export function GuardianPanel({ data }: Props) {
   useEffect(() => {
     if (!s) return;
     setMaxFreq(s.max_freq_mhz ?? s.current_freq_mhz ?? '');
-    setFloor(s.freq_floor_mhz ?? '');
     setSource(s.temp_source ?? 'vr');
     const defHigh =
       (s.temp_source ?? 'vr') === 'chip'
@@ -67,7 +67,6 @@ export function GuardianPanel({ data }: Props) {
     setMaxTemp(s.max_temp_c ?? defHigh ?? '');
   }, [
     s?.max_freq_mhz,
-    s?.freq_floor_mhz,
     s?.current_freq_mhz,
     s?.temp_source,
     s?.max_temp_c,
@@ -129,12 +128,6 @@ export function GuardianPanel({ data }: Props) {
   const highC = typeof maxTemp === 'number' ? maxTemp : defHighFor(source);
   const lowC = Math.round((highC - deadbandFor(source)) * 10) / 10;
   const liveTemp = s.live?.temp_c ?? s.live?.vr_temp_c ?? null;
-  const liveErr =
-    s.live?.asic_errors == null
-      ? '—'
-      : `${s.live.asic_errors}${
-          s.live.asic_error_delta ? ` (+${s.live.asic_error_delta})` : ''
-        }`;
   const softCeil = s.live?.soft_ceiling_mhz ?? null;
   const softCapped =
     softCeil != null && s.max_freq_mhz != null && softCeil < s.max_freq_mhz;
@@ -146,6 +139,7 @@ export function GuardianPanel({ data }: Props) {
       freq_floor_mhz?: number;
       temp_source?: 'vr' | 'chip';
       max_temp_c?: number;
+      voltage_enabled?: boolean;
     },
     ok: string,
   ) {
@@ -337,55 +331,48 @@ export function GuardianPanel({ data }: Props) {
               Save temp
             </Button>
             <span className="text-xs text-muted-foreground">
-              recovers at ~{lowC}°C
+              Hold setting at ~{lowC}°C
             </span>
           </div>
           <p className="text-xs text-muted-foreground">
-            The {srcLabel} threshold above which it cuts frequency; recovery is
-            derived at max − {deadbandFor(source)}°C. Default for {srcLabel}:{' '}
-            {defHighFor(source)}°C.
+            The {srcLabel} threshold above which it cuts frequency; it holds the
+            setting down to max − {deadbandFor(source)}°C, climbing again below
+            that. Default for {srcLabel}: {defHighFor(source)}°C.
             {source === 'chip'
               ? ' Keep it below the 75°C overheat watchdog.'
               : ''}
           </p>
         </div>
 
-        {/* Frequency floor (optional override) */}
-        <div className="space-y-2 border-t border-border pt-4">
-          <Label htmlFor="guardian-floor" className="text-sm">
-            Frequency floor (MHz)
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="guardian-floor"
-              type="number"
-              min={100}
-              max={2000}
-              step={5}
-              value={floor}
-              placeholder={String(d.frequency_floor_mhz)}
-              onChange={(e) =>
-                setFloor(e.target.value === '' ? '' : Number(e.target.value))
-              }
-              disabled={pending}
-              className="max-w-[140px]"
-            />
-            <Button
-              variant="subtle"
-              disabled={pending || floor === ''}
-              onClick={() =>
-                typeof floor === 'number' &&
-                run({ freq_floor_mhz: floor }, `Floor set to ${floor} MHz`)
-              }
-            >
-              Save floor
-            </Button>
+        {/* Voltage tuning (Phase 2) — only when the family + global master allow it */}
+        {s.supports_voltage && s.voltage_master && (
+          <div className="space-y-2 border-t border-border pt-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-sm">Voltage tuning (advanced)</Label>
+                <p className="text-xs text-muted-foreground">
+                  Also lets the Guardian raise/lower core voltage — to hold higher
+                  frequencies and shed heat efficiently. More performance, more
+                  risk. Hard cutoffs (temp/power/Vin) stay armed underneath.
+                </p>
+              </div>
+              <Switch
+                checked={s.voltage_enabled}
+                disabled={pending}
+                onCheckedChange={(next) => {
+                  if (next) setVoltConfirmOpen(true);
+                  else void run({ voltage_enabled: false }, 'Voltage tuning disabled');
+                }}
+              />
+            </div>
+            {s.voltage_enabled && (
+              <p className="text-xs text-muted-foreground">
+                Voltage envelope {d.v_floor_mv}–{d.v_ceiling_mv} mV, ±{d.v_step_mv} mV
+                steps.
+              </p>
+            )}
           </div>
-          <p className="text-xs text-muted-foreground">
-            The Guardian never throttles below this. Leave empty to use the
-            global default ({d.frequency_floor_mhz} MHz).
-          </p>
-        </div>
+        )}
 
         {/* Policy summary */}
         <div className="space-y-1 border-t border-border pt-4 text-xs text-muted-foreground">
@@ -394,9 +381,9 @@ export function GuardianPanel({ data }: Props) {
             {srcLabel} &gt; {highC}°C → −{d.step_down_vr_mhz} MHz · Rejected
             shares &gt; {d.reject_pct_max}% → −{d.step_down_err_mhz} MHz ·{' '}
             {srcLabel} &lt; {lowC}°C → +{d.step_up_mhz} MHz (up to your max).
-            Otherwise it holds. It also backs off if effective hashrate falls
-            more than {Math.round(d.hashrate_drop_pct * 100)}% below this chip's
-            best at the same frequency (ASIC instability).
+            Otherwise it holds. It also backs off — and won't push frequency up —
+            when effective hashrate drops below {Math.round(d.valid_pct * 100)}% of
+            the theoretical for the current frequency (ASIC instability).
           </p>
         </div>
 
@@ -406,9 +393,11 @@ export function GuardianPanel({ data }: Props) {
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
             <Stat label="Frequency" value={fmt(s.live?.frequency_mhz ?? currentFreq, 'MHz')} />
             <Stat label="Hashrate" value={fmt(s.live?.hashrate_ths ?? null, 'TH/s')} />
+            <Stat label="Expected" value={fmt(s.live?.expected_ths ?? null, 'TH/s')} />
+            <Stat label="Voltage" value={fmt(s.live?.voltage_mv ?? null, 'mV')} />
             <Stat label={`${srcLabel} temp`} value={fmt(liveTemp, '°C')} />
             <Stat label="Reject" value={fmt(s.live?.reject_pct ?? null, '%')} />
-            <Stat label="ASIC errors" value={liveErr} />
+            <Stat label="Error %" value={fmt(s.live?.error_pct ?? null, '%')} />
             <Stat label="Ceiling" value={fmt(s.live?.ceiling_mhz ?? s.max_freq_mhz, 'MHz')} />
             <Stat label="Floor" value={fmt(s.live?.floor_mhz ?? s.freq_floor_mhz, 'MHz')} />
           </div>
@@ -486,6 +475,50 @@ export function GuardianPanel({ data }: Props) {
             <Button
               disabled={pending}
               onClick={confirmEnable}
+              className="gap-1.5"
+            >
+              <ShieldAlert className="h-4 w-4" /> I understand — enable
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Stronger confirmation for the Phase 2 voltage co-tuner. */}
+      <Dialog open={voltConfirmOpen} onOpenChange={setVoltConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-400" /> Enable voltage tuning?
+            </DialogTitle>
+            <DialogDescription asChild>
+              <div className="space-y-3 pt-1 text-sm text-muted-foreground">
+                <p>
+                  This lets the Guardian change your miner's{' '}
+                  <strong className="text-foreground">core voltage</strong>{' '}
+                  automatically, not just its frequency. Raising voltage increases
+                  power draw, heat and stress on the VRM and ASIC — it's the most
+                  aggressive thing the Guardian can do, and you enable it{' '}
+                  <strong className="text-foreground">at your own risk</strong>.
+                </p>
+                <p>
+                  Hard cutoffs (chip/VR temperature, power and input-voltage
+                  limits) stay armed and the 75°C watchdog sits underneath, but you
+                  remain responsible for your hardware. Watch it closely,
+                  especially the first time.
+                </p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="subtle" onClick={() => setVoltConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={pending}
+              onClick={async () => {
+                setVoltConfirmOpen(false);
+                await run({ voltage_enabled: true }, 'Voltage tuning enabled');
+              }}
               className="gap-1.5"
             >
               <ShieldAlert className="h-4 w-4" /> I understand — enable
