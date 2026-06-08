@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS miners (
     guardian_freq_floor_mhz INTEGER,            -- optional floor override (NULL → global default)
     guardian_temp_source    TEXT,               -- vr (default) or chip — which sensor governs frequency
     guardian_max_temp_c     REAL,               -- per-miner max temp / high threshold (NULL → source default)
+    guardian_voltage_enabled INTEGER DEFAULT 0, -- 0/1 per-miner opt-in for the voltage co-tuner (Phase 2)
     last_seen_ts    INTEGER,
     last_status     TEXT,                 -- online | offline | error
     extra           TEXT,                 -- free-form JSON
@@ -365,6 +366,7 @@ def _init_db_sync() -> None:
             "ALTER TABLE miners ADD COLUMN guardian_freq_floor_mhz INTEGER",
             "ALTER TABLE miners ADD COLUMN guardian_temp_source TEXT",
             "ALTER TABLE miners ADD COLUMN guardian_max_temp_c REAL",
+            "ALTER TABLE miners ADD COLUMN guardian_voltage_enabled INTEGER DEFAULT 0",
         ]:
             try:
                 conn.execute(column_def)
@@ -1525,6 +1527,7 @@ async def set_guardian_config(
     freq_floor_mhz: int | None = None,
     temp_source: str | None = None,
     max_temp_c: float | None = None,
+    voltage_enabled: bool | None = None,
 ) -> None:
     """Update the Guardian settings for a miner.
 
@@ -1540,6 +1543,7 @@ async def set_guardian_config(
     """
     enabled_int = None if enabled is None else (1 if enabled else 0)
     source = None if temp_source is None else str(temp_source).lower()
+    voltage_int = None if voltage_enabled is None else (1 if voltage_enabled else 0)
     async with connect() as conn:
         await conn.execute(
             """
@@ -1549,6 +1553,7 @@ async def set_guardian_config(
               guardian_freq_floor_mhz = COALESCE(?, guardian_freq_floor_mhz),
               guardian_temp_source = COALESCE(?, guardian_temp_source),
               guardian_max_temp_c = COALESCE(?, guardian_max_temp_c),
+              guardian_voltage_enabled = COALESCE(?, guardian_voltage_enabled),
               updated_at = ?
             WHERE id = ?
             """,
@@ -1558,6 +1563,7 @@ async def set_guardian_config(
                 freq_floor_mhz,
                 source,
                 max_temp_c,
+                voltage_int,
                 now_ts(),
                 miner_id,
             ),

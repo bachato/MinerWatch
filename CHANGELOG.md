@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.9] — 2026-06-08
+
+### Changed
+
+- **Guardian: instability is now judged against the theoretical hashrate.**
+  Replaces the 1.10.5 "dropped below the best we've seen" heuristic with a
+  physics-based test: the theoretical hashrate for a frequency is
+  `freq × cores / 1e6` TH/s (cores = AxeOS `smallCoreCount` × `asicCount`), and a
+  point is valid only when the measured hashrate is at least 97% of it (a 3%
+  tolerance, tightened from the bitaxe benchmark's 6% so a *continuous* governor
+  stays nearer the efficient edge instead of pushing frequency into rising errors). The governor raises frequency **only
+  while the current point is valid**, and steps down — pinning a soft ceiling
+  just below — when it isn't. So it judges a frequency immediately and in
+  absolute terms instead of needing to first observe a "good" run, which fixes
+  the over-overclock chase more cleanly. This is the safe, frequency-only
+  foundation (Phase 1) of the continuous voltage+frequency co-tuner specified in
+  `docs/guardian-cotuner-design.md`. The post-change settle window is raised to
+  180 s to match field tuners (AxeOS's hashrate EWMA lags a minute or two).
+- **Guardian: temperature deadband narrowed from 5 °C to 3 °C.** It now settles
+  closer to your temperature limit (a little more hashrate) while staying wide
+  enough not to hunt at the edge.
+- **Guardian panel tidy-up + higher voltage ceiling.** Removed the per-miner
+  Frequency-floor field (the global floor still applies as the runaway-down
+  safety net — now 485 MHz, just below the Gamma's 525 stock — it just isn't an
+  editable per-miner knob anymore); relabelled the
+  max-temperature hint from "recovers at" to "Hold setting at"; and raised the
+  voltage co-tuner's default ceiling from 1300 mV to 1350 mV (still under the
+  benchmark's 1400 mV cap — the power and temperature cutoffs remain the real
+  bound).
+- **Guardian: ASIC error-% brake.** A new `error_pct_max` (default 2%) treats the
+  chip as unstable when the firmware's `errorPercentage` climbs past it, even if
+  the hashrate still meets `valid_pct`. In voltage mode the co-tuner raises
+  voltage to cure it; frequency-only mode steps down. This catches the regime
+  where pushing frequency at fixed voltage drives errors up before effective
+  hashrate visibly drops.
+
+### Added
+
+- **Guardian live readout shows the theoretical (expected) hashrate** alongside
+  the effective one, plus a validity flag, so you can see at a glance whether the
+  chip is keeping up at the current frequency. It also reads the theoretical
+  value straight from the firmware's `expectedHashrate` (exact match with the
+  AxeOS dashboard) and surfaces the firmware error % and core voltage.
+- **Guardian: continuous voltage + frequency co-tuner (Phase 2, opt-in).** When
+  enabled per-miner — behind a confirmation, off by default — the Guardian also
+  tunes core voltage: it raises voltage to cure instability and hold higher
+  frequencies, and lowers it alongside frequency to shed heat efficiently, to
+  keep each miner at the best operating point under your temperature limit.
+  Bounded by hard cutoffs checked every tick (chip/VR temperature, power — taken
+  from the firmware's own `maxPower` — and input-voltage band), a conservative
+  voltage envelope, and the 75°C watchdog underneath; it backs both levers off
+  the instant a cutoff trips. Gated by a global master switch
+  (`guardian.v2_voltage_enabled`) plus the per-miner opt-in. See
+  `docs/guardian-cotuner-design.md`.
+
+### Fixed
+
+- **Co-tuner steered on the measured core voltage instead of the set one.**
+  AxeOS's `coreVoltageActual` droops under load, so as frequency rose the voltage
+  appeared to "drop back," and the cure step could compute its +10 mV from the
+  drooped value and actually *lower* the set point. The co-tuner now steers on
+  the set `coreVoltage`, so voltage steps are clean and monotonic and the live
+  readout shows the set value (stable, not the load-dependent measurement).
+- **"Disable the Guardian to reset the soft ceiling" didn't take effect
+  promptly.** The in-memory soft ceiling only cleared on the next governor tick,
+  so a quick disable→re-enable (within one interval) never cleared it, and a page
+  reload didn't help (it's backend state). Any change to a miner's Guardian
+  settings now resets its in-memory state immediately — the soft ceiling and the
+  live readout clear right away.
+
 ## [1.10.6] — 2026-06-06
 
 ### Added

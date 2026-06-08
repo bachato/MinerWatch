@@ -62,7 +62,7 @@ sotto il meglio che quel chip ha dimostrato di reggere a una frequenza pari o
 superiore. Vedi §3.1.
 
 Valori di default (`GuardianCfg`, tarati sul campo): `vr_high_c=70`,
-`vr_low_c=65` (banda morta = isteresi che evita l'oscillazione al bordo),
+`vr_low_c=67` (banda morta di 3 °C = isteresi che evita l'oscillazione al bordo),
 `reject_pct_max=1.1`, `reject_min_shares=20`, `step_down_vr_mhz=20`,
 `step_down_err_mhz=10`, `step_up_mhz=10`, `interval_seconds=300`,
 `frequency_floor_mhz=400`.
